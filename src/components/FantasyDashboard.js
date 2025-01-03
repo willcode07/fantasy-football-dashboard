@@ -1,16 +1,11 @@
 // src/components/FantasyDashboard.js
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './FantasyDashboard.css';
 
 function FantasyDashboard() {
     const [selectedSeason, setSelectedSeason] = useState(() => {
         return localStorage.getItem('selectedSeason') || '2024';
-    });
-    
-    const [sortConfig, setSortConfig] = useState({
-        key: 'totalMNPS',
-        direction: 'desc'
     });
     
     const leagueIds = {
@@ -28,54 +23,41 @@ function FantasyDashboard() {
     const [teamNames, setTeamNames] = useState({});
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [loadingProgress, setLoadingProgress] = useState(0);
 
-    // Add cache state
-    const [dataCache, setDataCache] = useState(() => {
-        const cached = localStorage.getItem('fantasyDataCache');
-        return cached ? JSON.parse(cached) : {};
+    // Define sortConfig state
+    const [sortConfig, setSortConfig] = useState({
+        key: 'totalMNPS',  // Default sorting key
+        direction: 'desc'  // Default sorting direction
     });
 
-    // Get MNPS multiplier helper function
-    const getMNPSMultiplier = (season) => {
-        return parseInt(season) >= 2024 ? 0.0653 : 0.082;
-    };
+    // Load cached data immediately
+    useEffect(() => {
+        const cachedData = localStorage.getItem(`fantasy_${selectedSeason}`);
+        if (cachedData) {
+            const parsed = JSON.parse(cachedData);
+            setTeamNames(parsed.teamNames || {});
+            setSeasonData(parsed.seasonData || []);
+            setLoading(false);
+        } else {
+            setLoading(true); // Set loading to true if no cached data
+        }
+    }, [selectedSeason]);
 
+    // Update leagueId when selectedSeason changes
     useEffect(() => {
         setLeagueId(leagueIds[selectedSeason]);
-        setSeasonData([]);
-        setTeamNames({});
-        setLoading(true);
-        setError(null);
-        
-        localStorage.setItem('selectedSeason', selectedSeason);
-    }, [selectedSeason, leagueIds]);
+    }, [selectedSeason]);
 
-    // Optimize data fetching
+    // Fetch fresh data
     useEffect(() => {
         let isMounted = true;
         
         const fetchSeasonData = async () => {
             try {
-                if (!leagueId) return;
+                setLoadingProgress(0);
                 
-                // Check cache first
-                const cacheKey = `${selectedSeason}_data`;
-                const cachedData = dataCache[cacheKey];
-                const cacheExpiry = dataCache[`${cacheKey}_expiry`];
-                
-                // Use cache if it exists and is less than 1 hour old
-                if (cachedData && cacheExpiry && Date.now() < cacheExpiry) {
-                    console.log('Using cached data for', selectedSeason);
-                    setTeamNames(cachedData.teamNames);
-                    setSeasonData(cachedData.seasonData);
-                    setLoading(false);
-                    return;
-                }
-
-                setLoading(true);
-                setError(null);
-
-                // Fetch rosters and users in parallel
+                // Fetch basic data
                 const [rostersResponse, usersResponse] = await Promise.all([
                     axios.get(`https://api.sleeper.app/v1/league/${leagueId}/rosters`),
                     axios.get(`https://api.sleeper.app/v1/league/${leagueId}/users`)
@@ -83,74 +65,71 @@ function FantasyDashboard() {
 
                 if (!isMounted) return;
 
-                // Create team names mapping
+                // Process team names
                 const names = {};
                 rostersResponse.data.forEach(roster => {
                     const user = usersResponse.data.find(u => u.user_id === roster.owner_id);
                     names[roster.roster_id] = user?.display_name || `Team ${roster.roster_id}`;
                 });
+                setTeamNames(names);
 
-                // Batch week requests in groups of 4 to prevent rate limiting
+                // Fetch weeks in smaller batches
                 const weeks = Array.from({ length: 17 }, (_, i) => i + 1);
-                const batchSize = 4;
-                const weekData = [];
-                
-                for (let i = 0; i < weeks.length; i += batchSize) {
-                    const batch = weeks.slice(i, i + batchSize);
-                    const batchPromises = batch.map(week =>
-                        axios.get(`https://api.sleeper.app/v1/league/${leagueId}/matchups/${week}`)
-                            .then(response => ({ week, matchups: response.data }))
-                            .catch(() => ({ week, matchups: [] }))
-                    );
-                    
-                    const batchResults = await Promise.all(batchPromises);
-                    weekData.push(...batchResults);
-                    
-                    // Add a small delay between batches to prevent rate limiting
-                    if (i + batchSize < weeks.length) {
-                        await new Promise(resolve => setTimeout(resolve, 100));
-                    }
-                }
-
-                if (!isMounted) return;
-
-                // Process matchups
+                const processedData = [];
                 const multiplier = getMNPSMultiplier(selectedSeason);
-                const processedData = weekData
-                    .filter(({ matchups }) => matchups && matchups.length > 0)
-                    .flatMap(({ week, matchups }) => {
-                        const teamScores = matchups.map(matchup => ({
-                            roster_id: matchup.roster_id,
-                            points: matchup.points || 0
-                        }));
 
-                        const sortedScores = [...teamScores].sort((a, b) => b.points - a.points);
-                        const top6Ids = sortedScores.slice(0, 6).map(team => team.roster_id);
+                // Process 3 weeks at a time
+                for (let i = 0; i < weeks.length; i += 3) {
+                    if (!isMounted) return;
 
-                        return teamScores.map(({ roster_id, points }) => {
-                            const isTop6 = top6Ids.includes(roster_id);
-                            const mnps = isTop6 ? 5 + (points * multiplier) : (points * multiplier);
-                            return { week, roster_id, points, mnps, isTop6 };
-                        });
+                    const batchWeeks = weeks.slice(i, i + 3);
+                    const responses = await Promise.all(
+                        batchWeeks.map(week => 
+                            axios.get(`https://api.sleeper.app/v1/league/${leagueId}/matchups/${week}`)
+                        )
+                    );
+
+                    responses.forEach((response, index) => {
+                        const week = batchWeeks[index];
+                        const matchups = response.data;
+
+                        if (matchups && matchups.length > 0) {
+                            const teamScores = matchups.map(matchup => ({
+                                roster_id: matchup.roster_id,
+                                points: matchup.points || 0
+                            }));
+
+                            const sortedScores = [...teamScores].sort((a, b) => b.points - a.points);
+                            const top6Ids = sortedScores.slice(0, 6).map(team => team.roster_id);
+
+                            const weekData = teamScores.map(({ roster_id, points }) => {
+                                const isTop6 = top6Ids.includes(roster_id);
+                                const mnps = isTop6 ? 5 + (points * multiplier) : (points * multiplier);
+                                return { week, roster_id, points, mnps, isTop6 };
+                            });
+
+                            processedData.push(...weekData);
+                        }
                     });
 
-                // Update cache
-                const newCache = {
-                    ...dataCache,
-                    [cacheKey]: {
-                        teamNames: names,
-                        seasonData: processedData,
-                    },
-                    [`${cacheKey}_expiry`]: Date.now() + (60 * 60 * 1000) // 1 hour expiry
-                };
-                setDataCache(newCache);
-                localStorage.setItem('fantasyDataCache', JSON.stringify(newCache));
+                    // Update progress and data incrementally
+                    const progress = Math.min(100, ((i + 3) / weeks.length) * 100);
+                    setLoadingProgress(progress);
+                    setSeasonData([...processedData]);
 
-                if (isMounted) {
-                    setTeamNames(names);
-                    setSeasonData(processedData);
-                    setLoading(false);
+                    // Small delay between batches
+                    await new Promise(resolve => setTimeout(resolve, 50));
                 }
+
+                // Cache the final data
+                localStorage.setItem(`fantasy_${selectedSeason}`, JSON.stringify({
+                    teamNames: names,
+                    seasonData: processedData,
+                    timestamp: Date.now()
+                }));
+
+                setLoading(false);
+                setLoadingProgress(100);
 
             } catch (error) {
                 console.error('Error fetching season data:', error);
@@ -166,7 +145,12 @@ function FantasyDashboard() {
         return () => {
             isMounted = false;
         };
-    }, [leagueId, selectedSeason, dataCache]);
+    }, [leagueId, selectedSeason]);
+
+    // Get MNPS multiplier helper function
+    const getMNPSMultiplier = (season) => {
+        return parseInt(season) >= 2024 ? 0.0653 : 0.082;
+    };
 
     // Calculate total season MNPS for each team to determine top 5
     const seasonTotals = seasonData.reduce((acc, entry) => {
@@ -347,7 +331,7 @@ function FantasyDashboard() {
                             value={selectedSeason} 
                             onChange={(e) => setSelectedSeason(e.target.value)}
                             className="season-select"
-                            disabled={loading}
+                            disabled={loading && loadingProgress < 100}
                         >
                             <option value="2024">2024 Season (0.0653)</option>
                             <option value="2023">2023 Season (0.082)</option>
@@ -358,7 +342,17 @@ function FantasyDashboard() {
                             <option value="2018">2018 Season (0.082)</option>
                         </select>
                     </label>
-                    {loading && <div className="loading-indicator">Loading season data...</div>}
+                    {loading && loadingProgress < 100 && (
+                        <div className="loading-progress">
+                            <div 
+                                className="progress-bar" 
+                                style={{ width: `${loadingProgress}%` }}
+                            />
+                            <div className="progress-text">
+                                Loading... {Math.round(loadingProgress)}%
+                            </div>
+                        </div>
+                    )}
                     {error && <div className="error-message">{error}</div>}
                 </div>
 
