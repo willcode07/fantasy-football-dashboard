@@ -29,7 +29,11 @@ function FantasyDashboard() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
-    // Reset data when season changes
+    // Get MNPS multiplier helper function
+    const getMNPSMultiplier = (season) => {
+        return parseInt(season) >= 2024 ? 0.0653 : 0.082;
+    };
+
     useEffect(() => {
         setLeagueId(leagueIds[selectedSeason]);
         setSeasonData([]);
@@ -37,9 +41,8 @@ function FantasyDashboard() {
         setLoading(true);
         setError(null);
         
-        // Save selected season to localStorage
         localStorage.setItem('selectedSeason', selectedSeason);
-    }, [selectedSeason]);
+    }, [selectedSeason, leagueIds]);
 
     // Fetch data with better error handling and retry logic
     useEffect(() => {
@@ -133,25 +136,6 @@ function FantasyDashboard() {
             isMounted = false;
         };
     }, [leagueId, selectedSeason]);
-
-    // Handle season change
-    const handleSeasonChange = (e) => {
-        const newSeason = e.target.value;
-        setSelectedSeason(newSeason);
-    };
-
-    // Update MNPS multiplier helper function
-    const getMNPSMultiplier = (season) => {
-        return parseInt(season) >= 2024 ? 0.0653 : 0.082;
-    };
-
-    // Get unique weeks for the filter dropdown
-    const weeks = [...new Set(seasonData.map(entry => entry.week))].sort((a, b) => a - b);
-
-    // Filter data based on selected week
-    const filteredData = selectedWeek === 'all' 
-        ? seasonData 
-        : seasonData.filter(entry => entry.week === parseInt(selectedWeek));
 
     // Calculate total season MNPS for each team to determine top 5
     const seasonTotals = seasonData.reduce((acc, entry) => {
@@ -330,7 +314,7 @@ function FantasyDashboard() {
                         Select Season:
                         <select 
                             value={selectedSeason} 
-                            onChange={handleSeasonChange}
+                            onChange={(e) => setSelectedSeason(e.target.value)}
                             className="season-select"
                             disabled={loading}
                         >
@@ -339,7 +323,7 @@ function FantasyDashboard() {
                             <option value="2022">2022 Season (0.082)</option>
                             <option value="2021">2021 Season (0.082)</option>
                             <option value="2020">2020 Season (0.082)</option>
-                            <option value="2019">2020 Season (0.082)</option>
+                            <option value="2019">2019 Season (0.082)</option>
                             <option value="2018">2018 Season (0.082)</option>
                         </select>
                     </label>
