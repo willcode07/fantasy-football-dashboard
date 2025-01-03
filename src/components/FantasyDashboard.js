@@ -7,6 +7,7 @@ function FantasyDashboard() {
     const [seasonData, setSeasonData] = useState([]);
     const [teamNames, setTeamNames] = useState({});
     const [loading, setLoading] = useState(true);
+    const [selectedWeek, setSelectedWeek] = useState('all');
 
     useEffect(() => {
         const fetchTeamNames = async () => {
@@ -89,43 +90,71 @@ function FantasyDashboard() {
         fetchSeasonData();
     }, [leagueId]);
 
+    // Get unique weeks for the filter dropdown
+    const weeks = [...new Set(seasonData.map(entry => entry.week))].sort((a, b) => a - b);
+
+    // Filter data based on selected week
+    const filteredData = selectedWeek === 'all' 
+        ? seasonData 
+        : seasonData.filter(entry => entry.week === parseInt(selectedWeek));
+
     return (
         <div className="fantasy-dashboard">
             <h1>Fantasy Football MNPS Dashboard</h1>
             {loading ? (
                 <p>Loading season data...</p>
             ) : (
-                <div className="season-data">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Week</th>
-                                <th>Team</th>
-                                <th>Points</th>
-                                <th>MNPS</th>
-                                <th>Running Total</th>
-                                <th>Top 6?</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {seasonData.map((entry) => (
-                                <tr key={`${entry.week}-${entry.roster_id}`}>
-                                    <td>{entry.week}</td>
-                                    <td>{teamNames[entry.roster_id] || `Team ${entry.roster_id}`}</td>
-                                    <td>{entry.points.toFixed(2)}</td>
-                                    <td>{entry.mnps.toFixed(2)}</td>
-                                    <td>
-                                        {seasonData
-                                            .filter(e => e.roster_id === entry.roster_id && e.week <= entry.week)
-                                            .reduce((sum, e) => sum + e.mnps, 0)
-                                            .toFixed(2)}
-                                    </td>
-                                    <td>{entry.isTop6 ? '✅' : '❌'}</td>
+                <>
+                    <div className="filters">
+                        <label>
+                            Filter by Week:
+                            <select 
+                                value={selectedWeek} 
+                                onChange={(e) => setSelectedWeek(e.target.value)}
+                                className="week-filter"
+                            >
+                                <option value="all">All Weeks</option>
+                                {weeks.map(week => (
+                                    <option key={week} value={week}>
+                                        Week {week}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    </div>
+
+                    <div className="season-data">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Week</th>
+                                    <th>Team</th>
+                                    <th>Points</th>
+                                    <th>MNPS</th>
+                                    <th>Running Total</th>
+                                    <th>Top 6?</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
+                            </thead>
+                            <tbody>
+                                {filteredData.map((entry) => (
+                                    <tr key={`${entry.week}-${entry.roster_id}`}>
+                                        <td>{entry.week}</td>
+                                        <td>{teamNames[entry.roster_id] || `Team ${entry.roster_id}`}</td>
+                                        <td>{entry.points.toFixed(2)}</td>
+                                        <td>{entry.mnps.toFixed(2)}</td>
+                                        <td>
+                                            {seasonData
+                                                .filter(e => e.roster_id === entry.roster_id && e.week <= entry.week)
+                                                .reduce((sum, e) => sum + e.mnps, 0)
+                                                .toFixed(2)}
+                                        </td>
+                                        <td>{entry.isTop6 ? '✅' : '❌'}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </>
             )}
         </div>
     );
