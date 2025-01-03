@@ -49,4 +49,40 @@ label {
 
 select {
     min-width: 120px;
+}
+
+.playoff-header {
+    margin-top: 40px;
+    padding: 10px 0;
+    border-bottom: 2px solid #333;
+}
+
+.playoff-table {
+    margin-top: 20px;
+    background-color: #fff;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.playoff-table td, .playoff-table th {
+    text-align: center;
+}
+
+.top-6 {
+    background-color: #e8f5e9;
+    font-weight: bold;
+}
+
+.total-mnps {
+    font-weight: bold;
+    color: #2196f3;
+}
+
+/* Make the playoff table stand out */
+.playoff-data table {
+    border: 2px solid #333;
+}
+
+.playoff-data th {
+    background-color: #333;
+    color: white;
 } 
