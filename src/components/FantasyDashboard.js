@@ -98,6 +98,50 @@ function FantasyDashboard() {
         ? seasonData 
         : seasonData.filter(entry => entry.week === parseInt(selectedWeek));
 
+    // Calculate total season MNPS for each team to determine top 5
+    const seasonTotals = seasonData.reduce((acc, entry) => {
+        if (!acc[entry.roster_id]) {
+            acc[entry.roster_id] = {
+                totalMNPS: 0,
+                teamName: teamNames[entry.roster_id]
+            };
+        }
+        acc[entry.roster_id].totalMNPS += entry.mnps;
+        return acc;
+    }, {});
+
+    // Get top 5 roster IDs
+    const top5RosterIds = Object.entries(seasonTotals)
+        .sort(([, a], [, b]) => b.totalMNPS - a.totalMNPS)
+        .slice(0, 5)
+        .map(([rosterId]) => rosterId);
+
+    // Calculate playoff data (weeks 15-17) for top 5 teams only
+    const playoffData = seasonData
+        .filter(entry => entry.week >= 15 && entry.week <= 17)
+        .reduce((acc, entry) => {
+            if (!acc[entry.roster_id]) {
+                acc[entry.roster_id] = {
+                    teamName: teamNames[entry.roster_id] || `Team ${entry.roster_id}`,
+                    weeks: {},
+                    totalMNPS: 0,
+                    totalPoints: 0
+                };
+            }
+            acc[entry.roster_id].weeks[entry.week] = {
+                points: entry.points,
+                mnps: entry.mnps,
+                isTop6: entry.isTop6
+            };
+            acc[entry.roster_id].totalMNPS += entry.mnps;
+            acc[entry.roster_id].totalPoints += entry.points;
+            return acc;
+        }, {});
+
+    // Sort teams by total playoff MNPS
+    const sortedPlayoffTeams = Object.entries(playoffData)
+        .sort(([, a], [, b]) => b.totalMNPS - a.totalMNPS);
+
     return (
         <div className="fantasy-dashboard">
             <h1>Fantasy Football MNPS Dashboard</h1>
@@ -105,6 +149,29 @@ function FantasyDashboard() {
                 <p>Loading season data...</p>
             ) : (
                 <>
+                    <h2 className="playoff-header">Championship Battle Royale - Top 5 Teams (Weeks 15-17)</h2>
+                    <div className="playoff-data">
+                        <table className="playoff-table">
+                            <thead>
+                                <tr>
+                                    <th>Team</th>
+                                    <th>Total MNPS</th>
+                                    <th>Total Points</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {sortedPlayoffTeams.map(([teamId, teamData]) => (
+                                    <tr key={teamId}>
+                                        <td>{teamData.teamName}</td>
+                                        <td>{teamData.totalMNPS.toFixed(2)}</td>
+                                        <td>{teamData.totalPoints.toFixed(2)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <h2 className="season-header">Full Season Results</h2>
                     <div className="filters">
                         <label>
                             Filter by Week:
