@@ -52,7 +52,37 @@ tr:hover {
 
 .top-6 {
     background-color: #e8f5e9;
+    position: relative;
+}
+
+.top-6::after {
+    content: '✓';
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    font-size: 0.8em;
+    color: #4caf50;
+}
+
+.top6-count {
     font-weight: bold;
+    color: #4caf50;
+    background-color: #f5f5f5;
+}
+
+/* Make the top 6 cells more distinct */
+.top-6 .points {
+    color: #2e7d32;
+    font-weight: bold;
+}
+
+.top-6 .mnps {
+    color: #43a047;
+}
+
+/* Add hover effect to show top 6 more clearly */
+td:hover.top-6 {
+    background-color: #c8e6c9;
 }
 
 .total-mnps {
@@ -132,10 +162,6 @@ tr:hover {
     color: #666;
 }
 
-.top-6 {
-    background-color: #e8f5e9;
-}
-
 .total-col {
     background-color: #f5f5f5;
     font-weight: bold;
@@ -148,4 +174,56 @@ tr:hover {
 td {
     min-width: 100px;
     text-align: center;
+}
+
+.champion-row {
+    background-color: #fff3e0;
+}
+
+.champion-row td {
+    font-weight: bold;
+}
+
+.champion-badge {
+    margin-left: 10px;
+    color: #ff9800;
+    font-weight: bold;
+}
+
+.playoff-table .team-name {
+    font-weight: bold;
+    min-width: 200px;
+}
+
+.total-points, .total-mnps {
+    font-weight: bold;
+    background-color: #f5f5f5;
+}
+
+.total-mnps {
+    color: #2196f3;
+}
+
+.sortable {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+}
+
+.sortable:hover {
+    background-color: #e3f2fd;
+}
+
+.sticky-col.sortable {
+    z-index: 2;
+}
+
+th.sortable {
+    padding-right: 25px;  /* Make room for sort icon */
+}
+
+.regular-season-mnps {
+    background-color: #e3f2fd;
+    font-weight: bold;
+    color: #1976d2;
 } 
