@@ -5,8 +5,12 @@ import './FantasyDashboard.css';
 
 function FantasyDashboard() {
     const [selectedSeason, setSelectedSeason] = useState(() => {
-        // Get saved season from localStorage or default to '2024'
         return localStorage.getItem('selectedSeason') || '2024';
+    });
+    
+    const [sortConfig, setSortConfig] = useState({
+        key: 'totalMNPS',
+        direction: 'desc'
     });
     
     const leagueIds = {
