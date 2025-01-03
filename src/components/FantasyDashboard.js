@@ -29,6 +29,12 @@ function FantasyDashboard() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
+    // Add cache state
+    const [dataCache, setDataCache] = useState(() => {
+        const cached = localStorage.getItem('fantasyDataCache');
+        return cached ? JSON.parse(cached) : {};
+    });
+
     // Get MNPS multiplier helper function
     const getMNPSMultiplier = (season) => {
         return parseInt(season) >= 2024 ? 0.0653 : 0.082;
@@ -44,21 +50,30 @@ function FantasyDashboard() {
         localStorage.setItem('selectedSeason', selectedSeason);
     }, [selectedSeason, leagueIds]);
 
-    // Fetch data with better error handling and retry logic
+    // Optimize data fetching
     useEffect(() => {
         let isMounted = true;
-        let retryCount = 0;
-        const maxRetries = 3;
-
+        
         const fetchSeasonData = async () => {
             try {
                 if (!leagueId) return;
                 
-                // Clear old data
-                if (isMounted) {
-                    setLoading(true);
-                    setError(null);
+                // Check cache first
+                const cacheKey = `${selectedSeason}_data`;
+                const cachedData = dataCache[cacheKey];
+                const cacheExpiry = dataCache[`${cacheKey}_expiry`];
+                
+                // Use cache if it exists and is less than 1 hour old
+                if (cachedData && cacheExpiry && Date.now() < cacheExpiry) {
+                    console.log('Using cached data for', selectedSeason);
+                    setTeamNames(cachedData.teamNames);
+                    setSeasonData(cachedData.seasonData);
+                    setLoading(false);
+                    return;
                 }
+
+                setLoading(true);
+                setError(null);
 
                 // Fetch rosters and users in parallel
                 const [rostersResponse, usersResponse] = await Promise.all([
@@ -75,19 +90,31 @@ function FantasyDashboard() {
                     names[roster.roster_id] = user?.display_name || `Team ${roster.roster_id}`;
                 });
 
-                // Fetch all weeks
+                // Batch week requests in groups of 4 to prevent rate limiting
                 const weeks = Array.from({ length: 17 }, (_, i) => i + 1);
-                const weekPromises = weeks.map(week =>
-                    axios.get(`https://api.sleeper.app/v1/league/${leagueId}/matchups/${week}`)
-                        .then(response => ({ week, matchups: response.data }))
-                        .catch(() => ({ week, matchups: [] })) // Handle missing weeks gracefully
-                );
-
-                const weekData = await Promise.all(weekPromises);
+                const batchSize = 4;
+                const weekData = [];
+                
+                for (let i = 0; i < weeks.length; i += batchSize) {
+                    const batch = weeks.slice(i, i + batchSize);
+                    const batchPromises = batch.map(week =>
+                        axios.get(`https://api.sleeper.app/v1/league/${leagueId}/matchups/${week}`)
+                            .then(response => ({ week, matchups: response.data }))
+                            .catch(() => ({ week, matchups: [] }))
+                    );
+                    
+                    const batchResults = await Promise.all(batchPromises);
+                    weekData.push(...batchResults);
+                    
+                    // Add a small delay between batches to prevent rate limiting
+                    if (i + batchSize < weeks.length) {
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                    }
+                }
 
                 if (!isMounted) return;
 
-                // Process matchups with proper multiplier
+                // Process matchups
                 const multiplier = getMNPSMultiplier(selectedSeason);
                 const processedData = weekData
                     .filter(({ matchups }) => matchups && matchups.length > 0)
@@ -107,35 +134,39 @@ function FantasyDashboard() {
                         });
                     });
 
+                // Update cache
+                const newCache = {
+                    ...dataCache,
+                    [cacheKey]: {
+                        teamNames: names,
+                        seasonData: processedData,
+                    },
+                    [`${cacheKey}_expiry`]: Date.now() + (60 * 60 * 1000) // 1 hour expiry
+                };
+                setDataCache(newCache);
+                localStorage.setItem('fantasyDataCache', JSON.stringify(newCache));
+
                 if (isMounted) {
                     setTeamNames(names);
                     setSeasonData(processedData);
                     setLoading(false);
-                    setError(null);
                 }
 
             } catch (error) {
                 console.error('Error fetching season data:', error);
                 if (isMounted) {
-                    if (retryCount < maxRetries) {
-                        retryCount++;
-                        console.log(`Retrying... Attempt ${retryCount} of ${maxRetries}`);
-                        setTimeout(fetchSeasonData, 1000 * retryCount); // Exponential backoff
-                    } else {
-                        setError('Failed to load data. Please try again later.');
-                        setLoading(false);
-                    }
+                    setError('Failed to load data. Please try again later.');
+                    setLoading(false);
                 }
             }
         };
 
         fetchSeasonData();
 
-        // Cleanup function
         return () => {
             isMounted = false;
         };
-    }, [leagueId, selectedSeason]);
+    }, [leagueId, selectedSeason, dataCache]);
 
     // Calculate total season MNPS for each team to determine top 5
     const seasonTotals = seasonData.reduce((acc, entry) => {
