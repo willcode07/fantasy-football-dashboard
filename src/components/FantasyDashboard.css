@@ -92,12 +92,13 @@ tr:hover {
     overflow-x: auto;
     margin: 20px 0;
     position: relative;
+    max-width: 100%;
 }
 
 .season-table {
     border-collapse: collapse;
-    width: 100%;
-    white-space: nowrap;
+    width: max-content;
+    min-width: 100%;
 }
 
 .sticky-col {
@@ -106,9 +107,18 @@ tr:hover {
     background: white;
     z-index: 1;
     border-right: 2px solid #333;
+    min-width: 150px;
+    text-align: left;
+    padding-left: 10px;
 }
 
-.total-col {
+.season-table th, .season-table td {
+    padding: 8px;
+    border: 1px solid #ddd;
+    min-width: 80px;
+}
+
+.season-table th {
     background-color: #f5f5f5;
     font-weight: bold;
 }
@@ -120,6 +130,15 @@ tr:hover {
 .mnps {
     font-size: 0.9em;
     color: #666;
+}
+
+.top-6 {
+    background-color: #e8f5e9;
+}
+
+.total-col {
+    background-color: #f5f5f5;
+    font-weight: bold;
 }
 
 .mnps-total {

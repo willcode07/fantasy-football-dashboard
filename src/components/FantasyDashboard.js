@@ -142,6 +142,41 @@ function FantasyDashboard() {
     const sortedPlayoffTeams = Object.entries(playoffData)
         .sort(([, a], [, b]) => b.totalMNPS - a.totalMNPS);
 
+    // Organize data by team for the full season view
+    const organizeTeamData = () => {
+        const teamStats = {};
+        
+        // Initialize team data
+        seasonData.forEach(entry => {
+            if (!teamStats[entry.roster_id]) {
+                teamStats[entry.roster_id] = {
+                    teamName: teamNames[entry.roster_id] || `Team ${entry.roster_id}`,
+                    weeklyData: {},
+                    totalPoints: 0,
+                    totalMNPS: 0
+                };
+            }
+            
+            // Add weekly data
+            teamStats[entry.roster_id].weeklyData[entry.week] = {
+                points: entry.points,
+                mnps: entry.mnps,
+                isTop6: entry.isTop6
+            };
+            
+            // Update totals
+            teamStats[entry.roster_id].totalPoints += entry.points;
+            teamStats[entry.roster_id].totalMNPS += entry.mnps;
+        });
+        
+        // Sort teams by total points
+        return Object.entries(teamStats)
+            .sort(([, a], [, b]) => b.totalPoints - a.totalPoints);
+    };
+
+    const sortedTeams = organizeTeamData();
+    const weekNumbers = Array.from({ length: 17 }, (_, i) => i + 1); // Weeks 1-17
+
     return (
         <div className="fantasy-dashboard">
             <h1>Fantasy Football MNPS Dashboard</h1>
@@ -172,54 +207,54 @@ function FantasyDashboard() {
                     </div>
 
                     <h2 className="season-header">Full Season Results</h2>
-                    <div className="filters">
-                        <label>
-                            Filter by Week:
-                            <select 
-                                value={selectedWeek} 
-                                onChange={(e) => setSelectedWeek(e.target.value)}
-                                className="week-filter"
-                            >
-                                <option value="all">All Weeks</option>
-                                {weeks.map(week => (
-                                    <option key={week} value={week}>
-                                        Week {week}
-                                    </option>
-                                ))}
-                            </select>
-                        </label>
-                    </div>
-
                     <div className="season-data">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Week</th>
-                                    <th>Team</th>
-                                    <th>Points</th>
-                                    <th>MNPS</th>
-                                    <th>Running Total</th>
-                                    <th>Top 6?</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {filteredData.map((entry) => (
-                                    <tr key={`${entry.week}-${entry.roster_id}`}>
-                                        <td>{entry.week}</td>
-                                        <td>{teamNames[entry.roster_id] || `Team ${entry.roster_id}`}</td>
-                                        <td>{entry.points.toFixed(2)}</td>
-                                        <td>{entry.mnps.toFixed(2)}</td>
-                                        <td>
-                                            {seasonData
-                                                .filter(e => e.roster_id === entry.roster_id && e.week <= entry.week)
-                                                .reduce((sum, e) => sum + e.mnps, 0)
-                                                .toFixed(2)}
-                                        </td>
-                                        <td>{entry.isTop6 ? '✅' : '❌'}</td>
+                        <div className="table-wrapper">
+                            <table className="season-table">
+                                <thead>
+                                    <tr>
+                                        <th className="sticky-col">Team</th>
+                                        {weekNumbers.map(week => (
+                                            <th key={week}>Week {week}</th>
+                                        ))}
+                                        <th className="total-col">Total Points</th>
+                                        <th className="total-col">Total MNPS</th>
                                     </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody>
+                                    {sortedTeams.map(([rosterId, teamData]) => (
+                                        <tr key={rosterId}>
+                                            <td className="sticky-col">{teamData.teamName}</td>
+                                            {weekNumbers.map(week => {
+                                                const weekData = teamData.weeklyData[week];
+                                                return (
+                                                    <td 
+                                                        key={week} 
+                                                        className={weekData?.isTop6 ? 'top-6' : ''}
+                                                    >
+                                                        {weekData ? (
+                                                            <>
+                                                                <div className="points">
+                                                                    {weekData.points.toFixed(2)}
+                                                                </div>
+                                                                <div className="mnps">
+                                                                    {weekData.mnps.toFixed(2)}
+                                                                </div>
+                                                            </>
+                                                        ) : '-'}
+                                                    </td>
+                                                );
+                                            })}
+                                            <td className="total-col">
+                                                {teamData.totalPoints.toFixed(2)}
+                                            </td>
+                                            <td className="total-col mnps-total">
+                                                {teamData.totalMNPS.toFixed(2)}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </>
             )}
