@@ -3,7 +3,17 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 
 function FantasyDashboard() {
-    const [leagueId, setLeagueId] = useState('1094759154738130944');
+    const [selectedSeason, setSelectedSeason] = useState('2024');
+    const leagueIds = {
+        '2024': '1094759154738130944',
+        '2023': '974055073460396032',
+        '2022': '845131315744473088',
+        '2021': '652542582072619008',
+        '2020': '518187294738378752',
+        '2019': '387982074797166592',
+        '2018': '329722904092631040'
+    };
+    const [leagueId, setLeagueId] = useState(leagueIds['2024']);
     const [seasonData, setSeasonData] = useState([]);
     const [teamNames, setTeamNames] = useState({});
     const [loading, setLoading] = useState(true);
@@ -13,17 +23,26 @@ function FantasyDashboard() {
         direction: 'desc'
     });
 
+    // Update MNPS multiplier helper function
+    const getMNPSMultiplier = (season) => {
+        return parseInt(season) >= 2024 ? 0.0653 : 0.082;
+    };
+
+    useEffect(() => {
+        setLoading(true);
+        setLeagueId(leagueIds[selectedSeason]);
+    }, [selectedSeason]);
+
     useEffect(() => {
         const fetchSeasonData = async () => {
             try {
                 setLoading(true);
                 
-                // First fetch rosters to get team names
+                // Fetch data for the selected season
                 const rostersResponse = await axios.get(
                     `https://api.sleeper.app/v1/league/${leagueId}/rosters`
                 );
                 
-                // Get users to match with rosters
                 const usersResponse = await axios.get(
                     `https://api.sleeper.app/v1/league/${leagueId}/users`
                 );
@@ -47,7 +66,8 @@ function FantasyDashboard() {
                     })
                 );
 
-                // Process all matchups into seasonData format
+                // Process matchups with season-specific multiplier
+                const multiplier = getMNPSMultiplier(selectedSeason);
                 const processedData = weekData
                     .filter(({ matchups }) => matchups && matchups.length > 0)
                     .flatMap(({ week, matchups }) => {
@@ -61,12 +81,11 @@ function FantasyDashboard() {
 
                         return teamScores.map(({ roster_id, points }) => {
                             const isTop6 = top6Ids.includes(roster_id);
-                            const mnps = isTop6 ? 5 + (points * 0.0653) : (points * 0.0653);
+                            const mnps = isTop6 ? 5 + (points * multiplier) : (points * multiplier);
                             return { week, roster_id, points, mnps, isTop6 };
                         });
                     });
 
-                console.log('Processed Data:', processedData); // Debug log
                 setSeasonData(processedData);
                 setLoading(false);
             } catch (error) {
@@ -75,8 +94,10 @@ function FantasyDashboard() {
             }
         };
 
-        fetchSeasonData();
-    }, [leagueId]);
+        if (leagueId) {
+            fetchSeasonData();
+        }
+    }, [leagueId, selectedSeason]); // Add selectedSeason to dependencies
 
     // Get unique weeks for the filter dropdown
     const weeks = [...new Set(seasonData.map(entry => entry.week))].sort((a, b) => a - b);
@@ -256,8 +277,36 @@ function FantasyDashboard() {
     return (
         <div className="fantasy-dashboard">
             <h1>Fantasy Football MNPS Dashboard</h1>
+            
+            <div className="season-selector">
+                <label>
+                    Select Season:
+                    <select 
+                        value={selectedSeason} 
+                        onChange={(e) => setSelectedSeason(e.target.value)}
+                        className="season-select"
+                    >
+                        <option value="2024">2024 Season (0.0653)</option>
+                        <option value="2023">2023 Season (0.082)</option>
+                        <option value="2022">2022 Season (0.082)</option>
+                        <option value="2021">2021 Season (0.082)</option>
+                        <option value="2020">2020 Season (0.082)</option>
+                        <option value="2019">2020 Season (0.082)</option>
+                        <option value="2018">2018 Season (0.082)</option>
+                    </select>
+                </label>
+                <div className="multiplier-info">
+                    Current MNPS Multiplier: {getMNPSMultiplier(selectedSeason)}
+                    <div className="multiplier-note">
+                        Note: The MNPS multiplier was changed from 0.082 to 0.0653 starting in 2024
+                    </div>
+                </div>
+            </div>
+
             {loading ? (
-                <p>Loading season data...</p>
+                <div className="loading">
+                    <p>Loading {selectedSeason} season data...</p>
+                </div>
             ) : (
                 <>
                     <h2 className="playoff-header">Championship Playoffs - Top 5 MNPS Qualifiers (Weeks 15-17)</h2>
