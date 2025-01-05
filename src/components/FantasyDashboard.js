@@ -24,6 +24,7 @@ function FantasyDashboard() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [loadingProgress, setLoadingProgress] = useState(0);
+    const isDarkMode = true; // Set dark mode as default
 
     // Define sortConfig state
     const [sortConfig, setSortConfig] = useState({
@@ -207,10 +208,10 @@ function FantasyDashboard() {
             if (!top5RosterIds.includes(rosterId)) return;
             
             if (!championshipStats[rosterId]) {
-                const regularSeasonMNPS = top5Teams.find(team => team.rosterId === rosterId).regularSeasonMNPS;
+                const teamData = top5Teams.find(team => team.rosterId === rosterId);
                 championshipStats[rosterId] = {
                     teamName: teamNames[rosterId],
-                    regularSeasonMNPS, // Add regular season MNPS
+                    regularSeasonAverageMNPS: teamData ? teamData.regularSeasonAverageMNPS : 0, // Use the calculated average
                     weeks: {},
                     totalPoints: 0,
                     totalMNPS: 0
@@ -219,11 +220,43 @@ function FantasyDashboard() {
             
             championshipStats[rosterId].weeks[entry.week] = {
                 points: entry.points,
-                mnps: entry.mnps,
-                isTop6: entry.isTop6
+                mnps: entry.mnps, // Use full MNPS score
+                isTop6: true // Treat all as top 6 for scoring
             };
             championshipStats[rosterId].totalPoints += entry.points;
-            championshipStats[rosterId].totalMNPS += entry.mnps;
+            championshipStats[rosterId].totalMNPS += entry.mnps; // Use full MNPS score
+        });
+
+        // Highlight only the highest score for each week
+        Object.values(championshipStats).forEach(team => {
+            for (let week = 15; week <= 17; week++) {
+                if (team.weeks[week]) {
+                    const weekData = team.weeks[week];
+                    weekData.isHighest = false; // Initialize as not highest
+                }
+            }
+        });
+
+        // Determine highest scores for each week
+        const highestScores = {};
+        Object.entries(championshipStats).forEach(([rosterId, data]) => {
+            for (let week = 15; week <= 17; week++) {
+                if (data.weeks[week]) {
+                    const weekPoints = data.weeks[week].points;
+                    if (!highestScores[week] || weekPoints > highestScores[week].points) {
+                        highestScores[week] = { points: weekPoints, rosterId };
+                    }
+                }
+            }
+        });
+
+        // Mark the highest scores
+        Object.entries(championshipStats).forEach(([rosterId, data]) => {
+            for (let week = 15; week <= 17; week++) {
+                if (data.weeks[week] && data.weeks[week].points === highestScores[week].points) {
+                    data.weeks[week].isHighest = true; // Mark as highest
+                }
+            }
         });
 
         return Object.entries(championshipStats)
@@ -253,7 +286,8 @@ function FantasyDashboard() {
                     weeklyData: {},
                     totalPoints: 0,
                     totalMNPS: 0,
-                    top6Count: 0  // Add counter for top 6 finishes
+                    top6Count: 0,  // Add counter for top 6 finishes
+                    regularSeasonGames: 0 // Track number of games for average calculation
                 };
             }
             
@@ -265,9 +299,15 @@ function FantasyDashboard() {
             
             teamStats[rosterId].totalPoints += entry.points;
             teamStats[rosterId].totalMNPS += entry.mnps;
+            teamStats[rosterId].regularSeasonGames += 1; // Increment game count
             if (entry.isTop6) {
                 teamStats[rosterId].top6Count += 1;  // Increment top 6 counter
             }
+        });
+
+        // Calculate average MNPS for each team
+        Object.values(teamStats).forEach(team => {
+            team.regularSeasonAverageMNPS = team.regularSeasonGames > 0 ? (team.totalMNPS / team.regularSeasonGames) : 0; // Calculate MNPS average
         });
 
         return teamStats;
@@ -320,7 +360,7 @@ function FantasyDashboard() {
     const weekNumbers = Array.from({ length: 14 }, (_, i) => i + 1);
 
     return (
-        <div className="fantasy-dashboard-wrapper">
+        <div className={`fantasy-dashboard-wrapper ${isDarkMode ? 'dark-mode' : ''}`}>
             <div className="fantasy-dashboard">
                 <h1>Fantasy Football MNPS Dashboard</h1>
                 
@@ -376,7 +416,6 @@ function FantasyDashboard() {
                                 <thead>
                                     <tr>
                                         <th>Team</th>
-                                        <th>Regular Season MNPS</th>
                                         <th>Week 15</th>
                                         <th>Week 16</th>
                                         <th>Week 17</th>
@@ -393,13 +432,10 @@ function FantasyDashboard() {
                                                     <span className="champion-badge">🏆 Champion</span>
                                                 }
                                             </td>
-                                            <td className="regular-season-mnps">
-                                                {data.regularSeasonMNPS.toFixed(2)}
-                                            </td>
                                             {[15, 16, 17].map(week => (
                                                 <td 
                                                     key={week} 
-                                                    className={data.weeks[week]?.isTop6 ? 'top-6' : ''}
+                                                    className={data.weeks[week]?.isHighest ? 'top-6' : ''}
                                                 >
                                                     {data.weeks[week] ? (
                                                         <>
