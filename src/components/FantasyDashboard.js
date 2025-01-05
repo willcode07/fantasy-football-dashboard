@@ -412,53 +412,55 @@ function FantasyDashboard() {
                     <>
                         <h2 className="playoff-header">Championship Playoffs - Top 5 MNPS Qualifiers (Weeks 15-17)</h2>
                         <div className="playoff-data">
-                            <table className="playoff-table">
-                                <thead>
-                                    <tr>
-                                        <th>Team</th>
-                                        <th>Week 15</th>
-                                        <th>Week 16</th>
-                                        <th>Week 17</th>
-                                        <th>Playoff Points</th>
-                                        <th>Playoff MNPS</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {championshipData.map(([rosterId, data]) => (
-                                        <tr key={rosterId} className={rosterId === champion?.[0] ? 'champion-row' : ''}>
-                                            <td className="team-name">
-                                                {data.teamName}
-                                                {rosterId === champion?.[0] && 
-                                                    <span className="champion-badge">🏆 Champion</span>
-                                                }
-                                            </td>
-                                            {[15, 16, 17].map(week => (
-                                                <td 
-                                                    key={week} 
-                                                    className={data.weeks[week]?.isHighest ? 'top-6' : ''}
-                                                >
-                                                    {data.weeks[week] ? (
-                                                        <>
-                                                            <div className="points">
-                                                                {data.weeks[week].points.toFixed(2)}
-                                                            </div>
-                                                            <div className="mnps">
-                                                                {data.weeks[week].mnps.toFixed(2)}
-                                                            </div>
-                                                        </>
-                                                    ) : '-'}
-                                                </td>
-                                            ))}
-                                            <td className="total-points">
-                                                {data.totalPoints.toFixed(2)}
-                                            </td>
-                                            <td className="total-mnps">
-                                                {data.totalMNPS.toFixed(2)}
-                                            </td>
+                            <div className="table-wrapper">
+                                <table className="playoff-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Team</th>
+                                            <th>Week 15</th>
+                                            <th>Week 16</th>
+                                            <th>Week 17</th>
+                                            <th>Playoff Points</th>
+                                            <th>Playoff MNPS</th>
                                         </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody>
+                                        {championshipData.map(([rosterId, data]) => (
+                                            <tr key={rosterId} className={rosterId === champion?.[0] ? 'champion-row' : ''}>
+                                                <td className="team-name">
+                                                    {data.teamName}
+                                                    {rosterId === champion?.[0] && 
+                                                        <span className="champion-badge">🏆 Champion</span>
+                                                    }
+                                                </td>
+                                                {[15, 16, 17].map(week => (
+                                                    <td 
+                                                        key={week} 
+                                                        className={data.weeks[week]?.isHighest ? 'top-6' : ''}
+                                                    >
+                                                        {data.weeks[week] ? (
+                                                            <>
+                                                                <div className="points">
+                                                                    {data.weeks[week].points.toFixed(2)}
+                                                                </div>
+                                                                <div className="mnps">
+                                                                    {data.weeks[week].mnps.toFixed(2)}
+                                                                </div>
+                                                            </>
+                                                        ) : '-'}
+                                                    </td>
+                                                ))}
+                                                <td className="total-points">
+                                                    {data.totalPoints.toFixed(2)}
+                                                </td>
+                                                <td className="total-mnps">
+                                                    {data.totalMNPS.toFixed(2)}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
 
                         <h2 className="season-header">Regular Season Results (Weeks 1-14)</h2>
