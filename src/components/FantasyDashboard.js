@@ -3,23 +3,24 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './FantasyDashboard.css';
 
+// Stable league IDs mapping for each season
+const LEAGUE_IDS = {
+    '2025': '1243379119207497728',
+    '2024': '1094759154738130944',
+    '2023': '974055073460396032',
+    '2022': '845131315744473088',
+    '2021': '652542582072619008',
+    '2020': '518187294738378752',
+    '2019': '387982074797166592',
+    '2018': '329722904092631040'
+};
+
 function FantasyDashboard() {
     const [selectedSeason, setSelectedSeason] = useState(() => {
         return localStorage.getItem('selectedSeason') || '2024';
     });
-    
-    const leagueIds = {
-        '2025': '1243379119207497728',
-        '2024': '1094759154738130944',
-        '2023': '974055073460396032',
-        '2022': '845131315744473088',
-        '2021': '652542582072619008',
-        '2020': '518187294738378752',
-        '2019': '387982074797166592',
-        '2018': '329722904092631040'
-    };
 
-    const [leagueId, setLeagueId] = useState(leagueIds[selectedSeason]);
+    const [leagueId, setLeagueId] = useState(LEAGUE_IDS[selectedSeason]);
     const [seasonData, setSeasonData] = useState([]);
     const [teamNames, setTeamNames] = useState({});
     const [loading, setLoading] = useState(true);
@@ -48,7 +49,7 @@ function FantasyDashboard() {
 
     // Update leagueId when selectedSeason changes
     useEffect(() => {
-        setLeagueId(leagueIds[selectedSeason]);
+        setLeagueId(LEAGUE_IDS[selectedSeason]);
     }, [selectedSeason]);
 
     // Fetch fresh data
@@ -154,17 +155,7 @@ function FantasyDashboard() {
         return parseInt(season) >= 2024 ? 0.0653 : 0.082;
     };
 
-    // Calculate total season MNPS for each team to determine top 5
-    const seasonTotals = seasonData.reduce((acc, entry) => {
-        if (!acc[entry.roster_id]) {
-            acc[entry.roster_id] = {
-                totalMNPS: 0,
-                teamName: teamNames[entry.roster_id]
-            };
-        }
-        acc[entry.roster_id].totalMNPS += entry.mnps;
-        return acc;
-    }, {});
+    // Removed unused seasonTotals calculation to satisfy linter
 
     // Get top 5 teams by MNPS from regular season (weeks 1-14)
     const getTop5RegularSeasonByMNPS = () => {
