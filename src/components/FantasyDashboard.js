@@ -374,6 +374,7 @@ function FantasyDashboard() {
                             className="season-select"
                             disabled={loading && loadingProgress < 100}
                         >
+                            <option value="2025">2025 Season (0.0653)</option>
                             <option value="2024">2024 Season (0.0653)</option>
                             <option value="2023">2023 Season (0.082)</option>
                             <option value="2022">2022 Season (0.082)</option>
