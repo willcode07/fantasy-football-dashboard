@@ -27,6 +27,7 @@ function FantasyDashboard() {
     const [error, setError] = useState(null);
     const [loadingProgress, setLoadingProgress] = useState(0);
     const isDarkMode = true; // Set dark mode as default
+    const isProjectedSeason = selectedSeason === '2025';
 
     // Define sortConfig state
     const [sortConfig, setSortConfig] = useState({
@@ -403,7 +404,11 @@ function FantasyDashboard() {
                     </div>
                 ) : (
                     <>
-                        <h2 className="playoff-header">Championship Playoffs - Top 5 MNPS Qualifiers (Weeks 15-17)</h2>
+                        <h2 className="playoff-header">
+                            {isProjectedSeason
+                                ? 'Projected Championship - Top 5 MNPS Qualifiers (Weeks 15-17)'
+                                : 'Championship Playoffs - Top 5 MNPS Qualifiers (Weeks 15-17)'}
+                        </h2>
                         <div className="playoff-data">
                             <div className="table-wrapper">
                                 <table className="playoff-table">
