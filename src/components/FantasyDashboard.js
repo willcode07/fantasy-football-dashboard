@@ -298,6 +298,21 @@ function FantasyDashboard() {
             }
         });
 
+        // Ensure teams appear even if there is no weekly data yet (e.g., early 2025)
+        Object.keys(teamNames || {}).forEach((rid) => {
+            const rosterId = rid.toString();
+            if (!teamStats[rosterId]) {
+                teamStats[rosterId] = {
+                    teamName: teamNames[rosterId],
+                    weeklyData: {},
+                    totalPoints: 0,
+                    totalMNPS: 0,
+                    top6Count: 0,
+                    regularSeasonGames: 0
+                };
+            }
+        });
+
         // Calculate average MNPS for each team
         Object.values(teamStats).forEach(team => {
             team.regularSeasonAverageMNPS = team.regularSeasonGames > 0 ? (team.totalMNPS / team.regularSeasonGames) : 0; // Calculate MNPS average
