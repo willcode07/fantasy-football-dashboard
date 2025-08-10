@@ -1,70 +1,115 @@
-# Getting Started with Create React App
+### Fantasy Football Dashboard
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A simple, league-friendly dashboard to track matchups and season context. Built with React and deployed via GitHub Pages so anyone in the league can use it without installing anything.
 
-## Available Scripts
+- Live site: `https://willcode07.github.io/fantasy-football-dashboard`
+- Tech: React (CRA), Axios, GitHub Pages
 
-In the project directory, you can run:
+---
 
-### `npm start`
+### Why contribute
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+This is our shared league tool. Contributions welcome from engineers and non-engineers alike:
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+- Engineers: improve UX, add features, clean up code, tests, data plumbing
+- Lawyers and non-coders: copy clarity, rules explanations, bug reports, product ideas, QA
 
-### `npm test`
+No backend or secrets required. All work is client-side.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+---
 
-### `npm run build`
+### Quick start
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+1) Prereqs: Node 18+ and npm 9+
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+2) Run locally:
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+```bash
+git clone https://github.com/willcode07/fantasy-football-dashboard.git
+cd fantasy-football-dashboard
+npm install
+npm start
+```
 
-### `npm run eject`
+Open `http://localhost:3000`.
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+---
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+### Contributing guide
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+1) Pick something to do
+- Open an issue (bug/idea) or comment on an existing one
+- Or grab a task from the Roadmap below
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+2) Branch
+- `feature/<short-description>` for features
+- `fix/<short-description>` for fixes
 
-## Learn More
+3) Code style
+- Match existing style; keep functions small and named descriptively
+- Prefer clear variables over abbreviations
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+4) Commit and PR
+- Commits: short, imperative subject (e.g., "Add 2025 season toggle")
+- Open a PR to `main`. Include a short description and a screenshot/GIF if UI changes
+- Keep PRs focused (aim for under ~300 lines changed)
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+5) For non-coders
+- File an issue with steps, screenshots, or a mock
+- Propose copy text directly in the issue
+- Review PR descriptions and UI screenshots
 
-### Code Splitting
+---
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+### Project structure
 
-### Analyzing the Bundle Size
+```
+src/
+  components/
+    FantasyDashboard.js
+  App.js
+public/
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+Key scripts:
 
-### Making a Progressive Web App
+- `npm start`: run local dev server
+- `npm test`: run tests (when present)
+- `npm run build`: production build to `build/`
+- `npm run deploy`: publish the current build to GitHub Pages
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+---
 
-### Advanced Configuration
+### Deployment (GitHub Pages)
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+Deploys are manual from your machine:
 
-### Deployment
+```bash
+npm run deploy
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+This builds the app and publishes `build/` to the `gh-pages` branch. The live site updates at `https://willcode07.github.io/fantasy-football-dashboard`.
 
-### `npm run build` fails to minify
+---
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+### Current features
+
+- Dashboard for current week context
+- Season toggle (includes 2025)
+- Simple, fast static hosting
+
+---
+
+### Roadmap ideas
+
+- Standings and playoff odds
+- Matchup history per team
+- Simple waiver/FAAB tracker
+- Trade helper (side-by-side comparison)
+- Player projections view
+
+---
+
+### Support
+
+Open an issue with details or ping in our league chat. If something is broken in prod, please include the browser and steps to reproduce.
