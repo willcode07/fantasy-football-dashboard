@@ -17,7 +17,7 @@ const LEAGUE_IDS = {
 
 function FantasyDashboard() {
     const [selectedSeason, setSelectedSeason] = useState(() => {
-        return localStorage.getItem('selectedSeason') || '2024';
+        return localStorage.getItem('selectedSeason') || '2025';
     });
 
     const [leagueId, setLeagueId] = useState(LEAGUE_IDS[selectedSeason]);
@@ -162,9 +162,13 @@ function FantasyDashboard() {
     const getTop5RegularSeasonByMNPS = () => {
         const regularSeasonStats = {};
         
+        // For 2025 projected season, use all available data (current week)
+        // For completed seasons, only use weeks 1-14
+        const maxWeek = isProjectedSeason ? 17 : 14;
+        
         // Calculate regular season totals
         seasonData.forEach(entry => {
-            if (entry.week > 14) return; // Only weeks 1-14
+            if (entry.week > maxWeek) return;
             
             const rosterId = entry.roster_id.toString();
             if (!regularSeasonStats[rosterId]) {
@@ -193,7 +197,41 @@ function FantasyDashboard() {
         const championshipStats = {};
         const top5RosterIds = top5Teams.map(team => team.rosterId);
         
-        // Get playoff weeks data for top 5 teams
+        // For projected 2025 season, show current top 5 with their current stats
+        if (isProjectedSeason) {
+            top5Teams.forEach(team => {
+                const rosterId = team.rosterId;
+                championshipStats[rosterId] = {
+                    teamName: teamNames[rosterId],
+                    regularSeasonAverageMNPS: team.regularSeasonMNPS / Math.max(1, seasonData.filter(entry => 
+                        entry.roster_id.toString() === rosterId && entry.week <= 17
+                    ).length), // Calculate average based on games played
+                    weeks: {},
+                    totalPoints: 0,
+                    totalMNPS: team.regularSeasonMNPS,
+                    isProjected: true
+                };
+                
+                // Show current week data if available
+                const teamData = seasonData.filter(entry => 
+                    entry.roster_id.toString() === rosterId && entry.week <= 17
+                );
+                
+                teamData.forEach(entry => {
+                    championshipStats[rosterId].weeks[entry.week] = {
+                        points: entry.points,
+                        mnps: entry.mnps,
+                        isTop6: entry.isTop6
+                    };
+                    championshipStats[rosterId].totalPoints += entry.points;
+                });
+            });
+            
+            return Object.entries(championshipStats)
+                .sort(([, a], [, b]) => b.totalMNPS - a.totalMNPS);
+        }
+        
+        // For completed seasons, get actual playoff weeks data for top 5 teams
         seasonData.forEach(entry => {
             if (entry.week < 15 || entry.week > 17) return;
             
@@ -204,7 +242,7 @@ function FantasyDashboard() {
                 const teamData = top5Teams.find(team => team.rosterId === rosterId);
                 championshipStats[rosterId] = {
                     teamName: teamNames[rosterId],
-                    regularSeasonAverageMNPS: teamData ? teamData.regularSeasonAverageMNPS : 0, // Use the calculated average
+                    regularSeasonAverageMNPS: teamData ? teamData.regularSeasonAverageMNPS : 0,
                     weeks: {},
                     totalPoints: 0,
                     totalMNPS: 0
@@ -213,11 +251,11 @@ function FantasyDashboard() {
             
             championshipStats[rosterId].weeks[entry.week] = {
                 points: entry.points,
-                mnps: entry.mnps, // Use full MNPS score
+                mnps: entry.mnps,
                 isTop6: true // Treat all as top 6 for scoring
             };
             championshipStats[rosterId].totalPoints += entry.points;
-            championshipStats[rosterId].totalMNPS += entry.mnps; // Use full MNPS score
+            championshipStats[rosterId].totalMNPS += entry.mnps;
         });
 
         // Highlight only the highest score for each week
@@ -268,9 +306,13 @@ function FantasyDashboard() {
     const organizeTeamData = () => {
         const teamStats = {};
         
+        // For 2025 projected season, use all available data (current week)
+        // For completed seasons, only use weeks 1-14
+        const maxWeek = isProjectedSeason ? 17 : 14;
+        
         // Initialize team data
         seasonData.forEach(entry => {
-            if (entry.week > 14) return; // Only weeks 1-14
+            if (entry.week > maxWeek) return;
             
             const rosterId = entry.roster_id.toString();
             if (!teamStats[rosterId]) {
@@ -365,7 +407,12 @@ function FantasyDashboard() {
 
     const teamData = organizeTeamData();
     const sortedTeams = sortData(teamData, sortConfig);
-    const weekNumbers = Array.from({ length: 14 }, (_, i) => i + 1);
+    
+    // For 2025 projected season, show only weeks with data
+    // For completed seasons, show weeks 1-14
+    const weekNumbers = isProjectedSeason 
+        ? Array.from(new Set(seasonData.map(entry => entry.week).filter(week => week <= 17))).sort((a, b) => a - b)
+        : Array.from({ length: 14 }, (_, i) => i + 1);
 
     return (
         <div className={`fantasy-dashboard-wrapper ${isDarkMode ? 'dark-mode' : ''}`}>
@@ -421,7 +468,7 @@ function FantasyDashboard() {
                     <>
                         <h2 className="playoff-header">
                             {isProjectedSeason
-                                ? 'Projected Championship - Top 5 MNPS Qualifiers (Weeks 15-17)'
+                                ? 'Current Playoff Picture - Top 5 MNPS Leaders (Rolling Preview)'
                                 : 'Championship Playoffs - Top 5 MNPS Qualifiers (Weeks 15-17)'}
                         </h2>
                         <div className="playoff-data">
@@ -430,39 +477,111 @@ function FantasyDashboard() {
                                     <thead>
                                         <tr>
                                             <th>Team</th>
-                                            <th>Week 15</th>
-                                            <th>Week 16</th>
-                                            <th>Week 17</th>
-                                            <th>Playoff Points</th>
-                                            <th>Playoff MNPS</th>
+                                            {isProjectedSeason ? (
+                                                <>
+                                                    <th>Current Week</th>
+                                                    <th>Recent Performance</th>
+                                                    <th>Season Total</th>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <th>Week 15</th>
+                                                    <th>Week 16</th>
+                                                    <th>Week 17</th>
+                                                </>
+                                            )}
+                                            <th>{isProjectedSeason ? 'Total Points' : 'Playoff Points'}</th>
+                                            <th>{isProjectedSeason ? 'Total MNPS' : 'Playoff MNPS'}</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {championshipData.map(([rosterId, data]) => (
-                                            <tr key={rosterId} className={rosterId === champion?.[0] ? 'champion-row' : ''}>
+                                            <tr key={rosterId} className={!isProjectedSeason && rosterId === champion?.[0] ? 'champion-row' : ''}>
                                                 <td className="team-name">
                                                     {data.teamName}
-                                                    {rosterId === champion?.[0] && 
+                                                    {!isProjectedSeason && rosterId === champion?.[0] && 
                                                         <span className="champion-badge">🏆 Champion</span>
                                                     }
                                                 </td>
-                                                {[15, 16, 17].map(week => (
-                                                    <td 
-                                                        key={week} 
-                                                        className={data.weeks[week]?.isHighest ? 'top-6' : ''}
-                                                    >
-                                                        {data.weeks[week] ? (
-                                                            <>
-                                                                <div className="points">
-                                                                    {data.weeks[week].points.toFixed(2)}
-                                                                </div>
-                                                                <div className="mnps">
-                                                                    {data.weeks[week].mnps.toFixed(2)}
-                                                                </div>
-                                                            </>
-                                                        ) : '-'}
-                                                    </td>
-                                                ))}
+                                                {isProjectedSeason ? (
+                                                    <>
+                                                        <td className="current-week">
+                                                            {(() => {
+                                                                const currentWeek = Math.max(...Object.keys(data.weeks).map(Number));
+                                                                const weekData = data.weeks[currentWeek];
+                                                                return weekData ? (
+                                                                    <>
+                                                                        <div className="points">
+                                                                            {weekData.points.toFixed(2)}
+                                                                        </div>
+                                                                        <div className="mnps">
+                                                                            {weekData.mnps.toFixed(2)}
+                                                                        </div>
+                                                                    </>
+                                                                ) : '-';
+                                                            })()}
+                                                        </td>
+                                                        <td className="recent-performance">
+                                                            {(() => {
+                                                                const recentWeeks = Object.keys(data.weeks)
+                                                                    .map(Number)
+                                                                    .sort((a, b) => b - a)
+                                                                    .slice(0, 3);
+                                                                const avgPoints = recentWeeks.length > 0 
+                                                                    ? recentWeeks.reduce((sum, week) => sum + (data.weeks[week]?.points || 0), 0) / recentWeeks.length
+                                                                    : 0;
+                                                                const avgMNPS = recentWeeks.length > 0
+                                                                    ? recentWeeks.reduce((sum, week) => sum + (data.weeks[week]?.mnps || 0), 0) / recentWeeks.length
+                                                                    : 0;
+                                                                return (
+                                                                    <>
+                                                                        <div className="points">
+                                                                            {avgPoints.toFixed(2)}
+                                                                        </div>
+                                                                        <div className="mnps">
+                                                                            {avgMNPS.toFixed(2)}
+                                                                        </div>
+                                                                    </>
+                                                                );
+                                                            })()}
+                                                        </td>
+                                                        <td className="season-total">
+                                                            {(() => {
+                                                                const totalGames = Object.keys(data.weeks).length;
+                                                                const avgPoints = totalGames > 0 ? data.totalPoints / totalGames : 0;
+                                                                const avgMNPS = totalGames > 0 ? data.totalMNPS / totalGames : 0;
+                                                                return (
+                                                                    <>
+                                                                        <div className="points">
+                                                                            {avgPoints.toFixed(2)}
+                                                                        </div>
+                                                                        <div className="mnps">
+                                                                            {avgMNPS.toFixed(2)}
+                                                                        </div>
+                                                                    </>
+                                                                );
+                                                            })()}
+                                                        </td>
+                                                    </>
+                                                ) : (
+                                                    [15, 16, 17].map(week => (
+                                                        <td 
+                                                            key={week} 
+                                                            className={data.weeks[week] && data.weeks[week].isHighest ? 'top-6' : ''}
+                                                        >
+                                                            {data.weeks[week] ? (
+                                                                <>
+                                                                    <div className="points">
+                                                                        {data.weeks[week].points.toFixed(2)}
+                                                                    </div>
+                                                                    <div className="mnps">
+                                                                        {data.weeks[week].mnps.toFixed(2)}
+                                                                    </div>
+                                                                </>
+                                                            ) : '-'}
+                                                        </td>
+                                                    ))
+                                                )}
                                                 <td className="total-points">
                                                     {data.totalPoints.toFixed(2)}
                                                 </td>
@@ -523,7 +642,7 @@ function FantasyDashboard() {
                                                     return (
                                                         <td 
                                                             key={week} 
-                                                            className={weekData?.isTop6 ? 'top-6' : ''}
+                                                            className={weekData && weekData.isTop6 ? 'top-6' : ''}
                                                         >
                                                             {weekData ? (
                                                                 <>
