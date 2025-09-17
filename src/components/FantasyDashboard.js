@@ -37,18 +37,13 @@ function FantasyDashboard() {
 
     // Get current week based on date (Tuesday 12am EST)
     const getCurrentWeekNumber = () => {
-        // For 2025 season, return week 2 since we only have weeks 1-2 data
-        // For other seasons, use date-based calculation
-        if (selectedSeason === '2025') {
-            return 2; // Only show weeks 1-2 for 2025
-        }
-        
         const now = new Date();
         const estOffset = -5; // EST is UTC-5
         const estTime = new Date(now.getTime() + (estOffset * 60 * 60 * 1000));
         
         // Get the start of the NFL season based on selected season
         const seasonStartDates = {
+            '2025': '2025-09-02',
             '2024': '2024-09-03',
             '2023': '2023-09-05',
             '2022': '2022-09-06',
@@ -58,7 +53,7 @@ function FantasyDashboard() {
             '2018': '2018-09-04'
         };
         
-        const seasonStart = new Date(seasonStartDates[selectedSeason] || seasonStartDates['2024']);
+        const seasonStart = new Date(seasonStartDates[selectedSeason] || seasonStartDates['2025']);
         const weeksSinceStart = Math.floor((estTime - seasonStart) / (7 * 24 * 60 * 60 * 1000));
         
         // Return current week (1-17) or 1 if before season starts
@@ -110,7 +105,7 @@ function FantasyDashboard() {
                 setTeamNames(names);
 
                 // Fetch weeks in smaller batches
-                // For projected seasons, fetch weeks with data plus current week
+                // For projected seasons, only fetch weeks with actual data
                 // For completed seasons, fetch all 17 weeks
                 const maxWeeksToFetch = isProjectedSeason ? Math.max(2, currentWeekNumber) : 17;
                 const weeks = Array.from({ length: maxWeeksToFetch }, (_, i) => i + 1);
@@ -457,7 +452,7 @@ function FantasyDashboard() {
     const teamData = organizeTeamData();
     const sortedTeams = sortData(teamData, sortConfig);
     
-    // For 2025 projected season, show only weeks with actual data
+    // For 2025 projected season, show weeks with data plus current week
     // For completed seasons, show weeks 1-14
     const weekNumbers = isProjectedSeason 
         ? (() => {
@@ -466,8 +461,13 @@ function FantasyDashboard() {
                 ? [...new Set(seasonData.map(entry => entry.week))].sort((a, b) => a - b)
                 : [];
             
-            // Only show weeks with actual data - no additional weeks
-            return weeksWithData;
+            // Add current week if not already included
+            const weeksToShow = [...weeksWithData];
+            if (!weeksToShow.includes(currentWeekNumber)) {
+                weeksToShow.push(currentWeekNumber);
+            }
+            
+            return weeksToShow.sort((a, b) => a - b);
         })()
         : Array.from({ length: 14 }, (_, i) => i + 1);
 
