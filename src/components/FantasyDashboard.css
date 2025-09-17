@@ -325,4 +325,16 @@ td {
 
 .table-wrapper::-webkit-scrollbar-track {
     background: #333333; /* Background of the scrollbar track */
-} 
+}
+
+
+/* Future week styling */
+.future-week {
+    background-color: #2a2a2a !important; /* Slightly different background */
+    color: #888888 !important; /* Muted text color */
+    font-style: italic;
+}
+
+.future-week:hover {
+    background-color: #333333 !important;
+}

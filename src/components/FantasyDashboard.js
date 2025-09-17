@@ -35,6 +35,29 @@ function FantasyDashboard() {
         direction: 'desc'  // Default sorting direction
     });
 
+    // Get current week based on date (Tuesday 12am EST)
+    const getCurrentWeekNumber = () => {
+        // For testing purposes, return week 3 (since we have weeks 1 & 2 data)
+        // In production, this would calculate based on actual dates
+        return 3;
+        
+        // Uncomment below for actual date-based calculation:
+        /*
+        const now = new Date();
+        const estOffset = -5; // EST is UTC-5
+        const estTime = new Date(now.getTime() + (estOffset * 60 * 60 * 1000));
+        
+        // Get the start of the NFL season (assuming Week 1 starts on a Tuesday)
+        const seasonStart = new Date('2025-09-02'); // Adjust this date as needed
+        const weeksSinceStart = Math.floor((estTime - seasonStart) / (7 * 24 * 60 * 60 * 1000));
+        
+        // Return current week (1-17) or 1 if before season starts
+        return Math.max(1, Math.min(17, weeksSinceStart + 1));
+        */
+    };
+
+    const currentWeekNumber = getCurrentWeekNumber();
+
     // Load cached data immediately
     useEffect(() => {
         const cachedData = localStorage.getItem(`fantasy_${selectedSeason}`);
@@ -112,7 +135,15 @@ function FantasyDashboard() {
                                 return { week, roster_id, points, mnps, isTop6 };
                             });
 
-                            processedData.push(...weekData);
+                            // Add week data, avoiding duplicates
+                            weekData.forEach(newEntry => {
+                                const existingIndex = processedData.findIndex(existing => 
+                                    existing.week === newEntry.week && existing.roster_id === newEntry.roster_id
+                                );
+                                if (existingIndex === -1) {
+                                    processedData.push(newEntry);
+                                }
+                            });
                         }
                     });
 
@@ -162,9 +193,9 @@ function FantasyDashboard() {
     const getTop5RegularSeasonByMNPS = () => {
         const regularSeasonStats = {};
         
-        // For 2025 projected season, use all available data (current week)
+        // For 2025 projected season, only use weeks 1 & 2 (actual Sleeper data available)
         // For completed seasons, only use weeks 1-14
-        const maxWeek = isProjectedSeason ? 17 : 14;
+        const maxWeek = isProjectedSeason ? 2 : 14;
         
         // Calculate regular season totals
         seasonData.forEach(entry => {
@@ -204,7 +235,7 @@ function FantasyDashboard() {
                 championshipStats[rosterId] = {
                     teamName: teamNames[rosterId],
                     regularSeasonAverageMNPS: team.regularSeasonMNPS / Math.max(1, seasonData.filter(entry => 
-                        entry.roster_id.toString() === rosterId && entry.week <= 17
+                        entry.roster_id.toString() === rosterId && entry.week <= 2
                     ).length), // Calculate average based on games played
                     weeks: {},
                     totalPoints: 0,
@@ -214,7 +245,7 @@ function FantasyDashboard() {
                 
                 // Show current week data if available
                 const teamData = seasonData.filter(entry => 
-                    entry.roster_id.toString() === rosterId && entry.week <= 17
+                    entry.roster_id.toString() === rosterId && entry.week <= 2
                 );
                 
                 teamData.forEach(entry => {
@@ -299,16 +330,13 @@ function FantasyDashboard() {
     const championshipData = seasonData.length > 0 ? getChampionshipData(top5Teams) : [];
     const champion = championshipData.length > 0 ? championshipData[0] : null;
 
-    console.log('Top 5 Roster IDs:', top5Teams);
-    console.log('Championship Data:', championshipData);
-
     // Organize team data with sorting capability
     const organizeTeamData = () => {
         const teamStats = {};
         
-        // For 2025 projected season, use all available data (current week)
+        // For 2025 projected season, only use weeks 1 & 2 (actual Sleeper data available)
         // For completed seasons, only use weeks 1-14
-        const maxWeek = isProjectedSeason ? 17 : 14;
+        const maxWeek = isProjectedSeason ? 2 : 14;
         
         // Initialize team data
         seasonData.forEach(entry => {
@@ -408,11 +436,12 @@ function FantasyDashboard() {
     const teamData = organizeTeamData();
     const sortedTeams = sortData(teamData, sortConfig);
     
-    // For 2025 projected season, show only weeks with data
+    // For 2025 projected season, show weeks 1 through current week + 1 (for future week)
     // For completed seasons, show weeks 1-14
     const weekNumbers = isProjectedSeason 
-        ? Array.from(new Set(seasonData.map(entry => entry.week).filter(week => week <= 17))).sort((a, b) => a - b)
+        ? Array.from({ length: currentWeekNumber + 1 }, (_, i) => i + 1)
         : Array.from({ length: 14 }, (_, i) => i + 1);
+
 
     return (
         <div className={`fantasy-dashboard-wrapper ${isDarkMode ? 'dark-mode' : ''}`}>
@@ -479,9 +508,9 @@ function FantasyDashboard() {
                                             <th>Team</th>
                                             {isProjectedSeason ? (
                                                 <>
-                                                    <th>Current Week</th>
-                                                    <th>Recent Performance</th>
-                                                    <th>Season Total</th>
+                                                    <th>Last Week</th>
+                                                    <th>Best Performance</th>
+                                                    <th>Season Average</th>
                                                 </>
                                             ) : (
                                                 <>
@@ -505,10 +534,10 @@ function FantasyDashboard() {
                                                 </td>
                                                 {isProjectedSeason ? (
                                                     <>
-                                                        <td className="current-week">
+                                                        <td className="last-week">
                                                             {(() => {
-                                                                const currentWeek = Math.max(...Object.keys(data.weeks).map(Number));
-                                                                const weekData = data.weeks[currentWeek];
+                                                                const lastWeek = Math.max(...Object.keys(data.weeks).map(Number));
+                                                                const weekData = data.weeks[lastWeek];
                                                                 return weekData ? (
                                                                     <>
                                                                         <div className="points">
@@ -521,31 +550,25 @@ function FantasyDashboard() {
                                                                 ) : '-';
                                                             })()}
                                                         </td>
-                                                        <td className="recent-performance">
+                                                        <td className="best-performance">
                                                             {(() => {
-                                                                const recentWeeks = Object.keys(data.weeks)
-                                                                    .map(Number)
-                                                                    .sort((a, b) => b - a)
-                                                                    .slice(0, 3);
-                                                                const avgPoints = recentWeeks.length > 0 
-                                                                    ? recentWeeks.reduce((sum, week) => sum + (data.weeks[week]?.points || 0), 0) / recentWeeks.length
-                                                                    : 0;
-                                                                const avgMNPS = recentWeeks.length > 0
-                                                                    ? recentWeeks.reduce((sum, week) => sum + (data.weeks[week]?.mnps || 0), 0) / recentWeeks.length
-                                                                    : 0;
+                                                                const weekData = Object.values(data.weeks);
+                                                                const bestWeek = weekData.reduce((best, current) => {
+                                                                    return current.points > best.points ? current : best;
+                                                                }, { points: 0, mnps: 0 });
                                                                 return (
                                                                     <>
                                                                         <div className="points">
-                                                                            {avgPoints.toFixed(2)}
+                                                                            {bestWeek.points.toFixed(2)}
                                                                         </div>
                                                                         <div className="mnps">
-                                                                            {avgMNPS.toFixed(2)}
+                                                                            {bestWeek.mnps.toFixed(2)}
                                                                         </div>
                                                                     </>
                                                                 );
                                                             })()}
                                                         </td>
-                                                        <td className="season-total">
+                                                        <td className="season-average">
                                                             {(() => {
                                                                 const totalGames = Object.keys(data.weeks).length;
                                                                 const avgPoints = totalGames > 0 ? data.totalPoints / totalGames : 0;
@@ -595,7 +618,7 @@ function FantasyDashboard() {
                             </div>
                         </div>
 
-                        <h2 className="season-header">Regular Season Results (Weeks 1-14)</h2>
+                        <h2 className="season-header">Regular Season Results (Weeks 1-17)</h2>
                         <div className="season-data">
                             <div className="table-wrapper">
                                 <table className="season-table">
@@ -604,15 +627,19 @@ function FantasyDashboard() {
                                             <th className="sticky-col sortable" onClick={() => handleSort('teamName')}>
                                                 Team {getSortIcon('teamName')}
                                             </th>
-                                            {weekNumbers.map(week => (
-                                                <th 
-                                                    key={week} 
-                                                    className="sortable"
-                                                    onClick={() => handleSort(`week_${week}`)}
-                                                >
-                                                    Week {week} {getSortIcon(`week_${week}`)}
-                                                </th>
-                                            ))}
+                                            {weekNumbers.map(week => {
+                                                const isCurrentWeek = week === currentWeekNumber;
+                                                const isFutureWeek = week > currentWeekNumber;
+                                                return (
+                                                    <th 
+                                                        key={week} 
+                                                        className={`sortable ${isFutureWeek ? 'future-week' : ''}`}
+                                                        onClick={() => handleSort(`week_${week}`)}
+                                                    >
+                                                        Week {week} {isCurrentWeek ? '(Current)' : ''} {getSortIcon(`week_${week}`)}
+                                                    </th>
+                                                );
+                                            })}
                                             <th 
                                                 className="total-col sortable" 
                                                 onClick={() => handleSort('top6Count')}
@@ -623,13 +650,13 @@ function FantasyDashboard() {
                                                 className="total-col sortable" 
                                                 onClick={() => handleSort('totalPoints')}
                                             >
-                                                Points {getSortIcon('totalPoints')}
+                                                Total Points {getSortIcon('totalPoints')}
                                             </th>
                                             <th 
                                                 className="total-col sortable" 
                                                 onClick={() => handleSort('totalMNPS')}
                                             >
-                                                MNPS {getSortIcon('totalMNPS')}
+                                                Total MNPS {getSortIcon('totalMNPS')}
                                             </th>
                                         </tr>
                                     </thead>
@@ -639,10 +666,26 @@ function FantasyDashboard() {
                                                 <td className="sticky-col">{data.teamName}</td>
                                                 {weekNumbers.map(week => {
                                                     const weekData = data.weeklyData[week];
+                                                    const isCurrentWeek = week === currentWeekNumber;
+                                                    const isFutureWeek = week > currentWeekNumber;
+                                                    
+                                                    // For current week, always show "-" with no special styling
+                                                    if (isCurrentWeek) {
+                                                        return (
+                                                            <td 
+                                                                key={week}
+                                                            >
+                                                                -
+                                                            </td>
+                                                        );
+                                                    }
+                                                    
+                                                    // For other weeks, show data normally
+                                                    const shouldShowTop6 = weekData && weekData.isTop6;
                                                     return (
                                                         <td 
                                                             key={week} 
-                                                            className={weekData && weekData.isTop6 ? 'top-6' : ''}
+                                                            className={`${shouldShowTop6 ? 'top-6' : ''} ${isFutureWeek ? 'future-week' : ''}`}
                                                         >
                                                             {weekData ? (
                                                                 <>
