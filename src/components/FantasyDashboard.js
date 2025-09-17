@@ -27,7 +27,7 @@ function FantasyDashboard() {
     const [error, setError] = useState(null);
     const [loadingProgress, setLoadingProgress] = useState(0);
     const isDarkMode = true; // Set dark mode as default
-    const isProjectedSeason = selectedSeason === '2025';
+    const isProjectedSeason = selectedSeason === new Date().getFullYear().toString();
 
     // Define sortConfig state
     const [sortConfig, setSortConfig] = useState({
@@ -37,23 +37,27 @@ function FantasyDashboard() {
 
     // Get current week based on date (Tuesday 12am EST)
     const getCurrentWeekNumber = () => {
-        // For testing purposes, return week 3 (since we have weeks 1 & 2 data)
-        // In production, this would calculate based on actual dates
-        return 3;
-        
-        // Uncomment below for actual date-based calculation:
-        /*
         const now = new Date();
         const estOffset = -5; // EST is UTC-5
         const estTime = new Date(now.getTime() + (estOffset * 60 * 60 * 1000));
         
-        // Get the start of the NFL season (assuming Week 1 starts on a Tuesday)
-        const seasonStart = new Date('2025-09-02'); // Adjust this date as needed
+        // Get the start of the NFL season based on selected season
+        const seasonStartDates = {
+            '2025': '2025-09-02',
+            '2024': '2024-09-03',
+            '2023': '2023-09-05',
+            '2022': '2022-09-06',
+            '2021': '2021-09-07',
+            '2020': '2020-09-08',
+            '2019': '2019-09-03',
+            '2018': '2018-09-04'
+        };
+        
+        const seasonStart = new Date(seasonStartDates[selectedSeason] || seasonStartDates['2025']);
         const weeksSinceStart = Math.floor((estTime - seasonStart) / (7 * 24 * 60 * 60 * 1000));
         
         // Return current week (1-17) or 1 if before season starts
         return Math.max(1, Math.min(17, weeksSinceStart + 1));
-        */
     };
 
     const currentWeekNumber = getCurrentWeekNumber();
@@ -101,7 +105,10 @@ function FantasyDashboard() {
                 setTeamNames(names);
 
                 // Fetch weeks in smaller batches
-                const weeks = Array.from({ length: 17 }, (_, i) => i + 1);
+                // For projected seasons, fetch weeks with data plus current week
+                // For completed seasons, fetch all 17 weeks
+                const maxWeeksToFetch = isProjectedSeason ? Math.max(2, currentWeekNumber) : 17;
+                const weeks = Array.from({ length: maxWeeksToFetch }, (_, i) => i + 1);
                 const processedData = [];
                 const multiplier = getMNPSMultiplier(selectedSeason);
 
@@ -180,7 +187,7 @@ function FantasyDashboard() {
         return () => {
             isMounted = false;
         };
-    }, [leagueId, selectedSeason]);
+    }, [leagueId, selectedSeason, currentWeekNumber]);
 
     // Get MNPS multiplier helper function
     const getMNPSMultiplier = (season) => {
@@ -193,9 +200,9 @@ function FantasyDashboard() {
     const getTop5RegularSeasonByMNPS = () => {
         const regularSeasonStats = {};
         
-        // For 2025 projected season, only use weeks 1 & 2 (actual Sleeper data available)
+        // For projected seasons, use weeks with data plus current week
         // For completed seasons, only use weeks 1-14
-        const maxWeek = isProjectedSeason ? 2 : 14;
+        const maxWeek = isProjectedSeason ? Math.max(2, currentWeekNumber) : 14;
         
         // Calculate regular season totals
         seasonData.forEach(entry => {
@@ -263,8 +270,12 @@ function FantasyDashboard() {
         }
         
         // For completed seasons, get actual playoff weeks data for top 5 teams
+        // Playoff weeks are typically 15-17, but can vary by season
+        const playoffStartWeek = 15;
+        const playoffEndWeek = 17;
+        
         seasonData.forEach(entry => {
-            if (entry.week < 15 || entry.week > 17) return;
+            if (entry.week < playoffStartWeek || entry.week > playoffEndWeek) return;
             
             const rosterId = entry.roster_id.toString();
             if (!top5RosterIds.includes(rosterId)) return;
@@ -291,7 +302,7 @@ function FantasyDashboard() {
 
         // Highlight only the highest score for each week
         Object.values(championshipStats).forEach(team => {
-            for (let week = 15; week <= 17; week++) {
+            for (let week = playoffStartWeek; week <= playoffEndWeek; week++) {
                 if (team.weeks[week]) {
                     const weekData = team.weeks[week];
                     weekData.isHighest = false; // Initialize as not highest
@@ -302,7 +313,7 @@ function FantasyDashboard() {
         // Determine highest scores for each week
         const highestScores = {};
         Object.entries(championshipStats).forEach(([rosterId, data]) => {
-            for (let week = 15; week <= 17; week++) {
+            for (let week = playoffStartWeek; week <= playoffEndWeek; week++) {
                 if (data.weeks[week]) {
                     const weekPoints = data.weeks[week].points;
                     if (!highestScores[week] || weekPoints > highestScores[week].points) {
@@ -314,7 +325,7 @@ function FantasyDashboard() {
 
         // Mark the highest scores
         Object.entries(championshipStats).forEach(([rosterId, data]) => {
-            for (let week = 15; week <= 17; week++) {
+            for (let week = playoffStartWeek; week <= playoffEndWeek; week++) {
                 if (data.weeks[week] && data.weeks[week].points === highestScores[week].points) {
                     data.weeks[week].isHighest = true; // Mark as highest
                 }
@@ -334,9 +345,9 @@ function FantasyDashboard() {
     const organizeTeamData = () => {
         const teamStats = {};
         
-        // For 2025 projected season, only use weeks 1 & 2 (actual Sleeper data available)
+        // For projected seasons, use weeks with data plus current week
         // For completed seasons, only use weeks 1-14
-        const maxWeek = isProjectedSeason ? 2 : 14;
+        const maxWeek = isProjectedSeason ? Math.max(2, currentWeekNumber) : 14;
         
         // Initialize team data
         seasonData.forEach(entry => {
@@ -436,10 +447,25 @@ function FantasyDashboard() {
     const teamData = organizeTeamData();
     const sortedTeams = sortData(teamData, sortConfig);
     
-    // For 2025 projected season, show weeks 1 through current week + 1 (for future week)
+    // For 2025 projected season, show only weeks with data plus one additional week
     // For completed seasons, show weeks 1-14
     const weekNumbers = isProjectedSeason 
-        ? Array.from({ length: currentWeekNumber + 1 }, (_, i) => i + 1)
+        ? (() => {
+            // Get weeks that have actual data
+            const weeksWithData = seasonData.length > 0 
+                ? [...new Set(seasonData.map(entry => entry.week))].sort((a, b) => a - b)
+                : [];
+            
+            if (weeksWithData.length === 0) {
+                return []; // No data yet, show nothing
+            }
+            
+            // Add one additional week after the last week with data
+            const lastWeekWithData = Math.max(...weeksWithData);
+            const weeksToShow = [...weeksWithData, lastWeekWithData + 1];
+            
+            return weeksToShow.sort((a, b) => a - b);
+        })()
         : Array.from({ length: 14 }, (_, i) => i + 1);
 
 
