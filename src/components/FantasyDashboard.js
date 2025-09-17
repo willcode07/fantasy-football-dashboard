@@ -127,31 +127,36 @@ function FantasyDashboard() {
                         const week = batchWeeks[index];
                         const matchups = response.data;
 
+                        // Only process weeks that have actual matchup data
                         if (matchups && matchups.length > 0) {
                             const teamScores = matchups.map(matchup => ({
                                 roster_id: matchup.roster_id,
                                 points: matchup.points || 0
                             }));
 
-                            const sortedScores = [...teamScores].sort((a, b) => b.points - a.points);
-                            const top6Ids = sortedScores.slice(0, 6).map(team => team.roster_id);
+                            // Only calculate top 6 and MNPS if we have valid scores
+                            if (teamScores.length > 0) {
+                                const sortedScores = [...teamScores].sort((a, b) => b.points - a.points);
+                                const top6Ids = sortedScores.slice(0, 6).map(team => team.roster_id);
 
-                            const weekData = teamScores.map(({ roster_id, points }) => {
-                                const isTop6 = top6Ids.includes(roster_id);
-                                const mnps = isTop6 ? 5 + (points * multiplier) : (points * multiplier);
-                                return { week, roster_id, points, mnps, isTop6 };
-                            });
+                                const weekData = teamScores.map(({ roster_id, points }) => {
+                                    const isTop6 = top6Ids.includes(roster_id);
+                                    const mnps = isTop6 ? 5 + (points * multiplier) : (points * multiplier);
+                                    return { week, roster_id, points, mnps, isTop6 };
+                                });
 
-                            // Add week data, avoiding duplicates
-                            weekData.forEach(newEntry => {
-                                const existingIndex = processedData.findIndex(existing => 
-                                    existing.week === newEntry.week && existing.roster_id === newEntry.roster_id
-                                );
-                                if (existingIndex === -1) {
-                                    processedData.push(newEntry);
-                                }
-                            });
+                                // Add week data, avoiding duplicates
+                                weekData.forEach(newEntry => {
+                                    const existingIndex = processedData.findIndex(existing => 
+                                        existing.week === newEntry.week && existing.roster_id === newEntry.roster_id
+                                    );
+                                    if (existingIndex === -1) {
+                                        processedData.push(newEntry);
+                                    }
+                                });
+                            }
                         }
+                        // If no matchups data, skip this week entirely - don't create empty entries
                     });
 
                     // Update progress and data incrementally
@@ -447,7 +452,7 @@ function FantasyDashboard() {
     const teamData = organizeTeamData();
     const sortedTeams = sortData(teamData, sortConfig);
     
-    // For 2025 projected season, show only weeks with data plus one additional week
+    // For 2025 projected season, show only weeks with actual data
     // For completed seasons, show weeks 1-14
     const weekNumbers = isProjectedSeason 
         ? (() => {
@@ -456,15 +461,8 @@ function FantasyDashboard() {
                 ? [...new Set(seasonData.map(entry => entry.week))].sort((a, b) => a - b)
                 : [];
             
-            if (weeksWithData.length === 0) {
-                return []; // No data yet, show nothing
-            }
-            
-            // Add one additional week after the last week with data
-            const lastWeekWithData = Math.max(...weeksWithData);
-            const weeksToShow = [...weeksWithData, lastWeekWithData + 1];
-            
-            return weeksToShow.sort((a, b) => a - b);
+            // Only show weeks with actual data - no additional weeks
+            return weeksWithData;
         })()
         : Array.from({ length: 14 }, (_, i) => i + 1);
 
