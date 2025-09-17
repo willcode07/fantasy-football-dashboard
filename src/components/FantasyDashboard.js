@@ -210,9 +210,9 @@ function FantasyDashboard() {
     const getTop5RegularSeasonByMNPS = () => {
         const regularSeasonStats = {};
         
-        // For projected seasons, use weeks with data plus current week
+        // For projected seasons, only use weeks with actual data (no additional weeks)
         // For completed seasons, only use weeks 1-14
-        const maxWeek = isProjectedSeason ? Math.max(2, currentWeekNumber) : 14;
+        const maxWeek = isProjectedSeason ? 2 : 14;
         
         // Calculate regular season totals
         seasonData.forEach(entry => {
@@ -355,9 +355,9 @@ function FantasyDashboard() {
     const organizeTeamData = () => {
         const teamStats = {};
         
-        // For projected seasons, use weeks with data plus current week
+        // For projected seasons, only use weeks with actual data (no additional weeks)
         // For completed seasons, only use weeks 1-14
-        const maxWeek = isProjectedSeason ? Math.max(2, currentWeekNumber) : 14;
+        const maxWeek = isProjectedSeason ? 2 : 14;
         
         // Initialize team data
         seasonData.forEach(entry => {
