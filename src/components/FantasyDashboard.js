@@ -37,13 +37,18 @@ function FantasyDashboard() {
 
     // Get current week based on date (Tuesday 12am EST)
     const getCurrentWeekNumber = () => {
+        // For 2025 season, return week 2 since we only have weeks 1-2 data
+        // For other seasons, use date-based calculation
+        if (selectedSeason === '2025') {
+            return 2; // Only show weeks 1-2 for 2025
+        }
+        
         const now = new Date();
         const estOffset = -5; // EST is UTC-5
         const estTime = new Date(now.getTime() + (estOffset * 60 * 60 * 1000));
         
         // Get the start of the NFL season based on selected season
         const seasonStartDates = {
-            '2025': '2025-09-02',
             '2024': '2024-09-03',
             '2023': '2023-09-05',
             '2022': '2022-09-06',
@@ -53,7 +58,7 @@ function FantasyDashboard() {
             '2018': '2018-09-04'
         };
         
-        const seasonStart = new Date(seasonStartDates[selectedSeason] || seasonStartDates['2025']);
+        const seasonStart = new Date(seasonStartDates[selectedSeason] || seasonStartDates['2024']);
         const weeksSinceStart = Math.floor((estTime - seasonStart) / (7 * 24 * 60 * 60 * 1000));
         
         // Return current week (1-17) or 1 if before season starts
