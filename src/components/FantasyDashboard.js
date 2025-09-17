@@ -107,7 +107,7 @@ function FantasyDashboard() {
                 // Fetch weeks in smaller batches
                 // For projected seasons, only fetch weeks with actual data
                 // For completed seasons, fetch all 17 weeks
-                const maxWeeksToFetch = isProjectedSeason ? 2 : 17;
+                const maxWeeksToFetch = isProjectedSeason ? Math.max(2, currentWeekNumber) : 17;
                 const weeks = Array.from({ length: maxWeeksToFetch }, (_, i) => i + 1);
                 const processedData = [];
                 const multiplier = getMNPSMultiplier(selectedSeason);
@@ -207,7 +207,7 @@ function FantasyDashboard() {
         
         // For projected seasons, only use weeks with actual data (no additional weeks)
         // For completed seasons, only use weeks 1-14
-        const maxWeek = isProjectedSeason ? 2 : 14;
+        const maxWeek = isProjectedSeason ? Math.max(2, currentWeekNumber) : 14;
         
         // Calculate regular season totals
         seasonData.forEach(entry => {
@@ -352,7 +352,7 @@ function FantasyDashboard() {
         
         // For projected seasons, only use weeks with actual data (no additional weeks)
         // For completed seasons, only use weeks 1-14
-        const maxWeek = isProjectedSeason ? 2 : 14;
+        const maxWeek = isProjectedSeason ? Math.max(2, currentWeekNumber) : 14;
         
         // Initialize team data
         seasonData.forEach(entry => {
@@ -452,7 +452,7 @@ function FantasyDashboard() {
     const teamData = organizeTeamData();
     const sortedTeams = sortData(teamData, sortConfig);
     
-    // For 2025 projected season, show only weeks with actual data
+    // For 2025 projected season, show weeks with data plus current week
     // For completed seasons, show weeks 1-14
     const weekNumbers = isProjectedSeason 
         ? (() => {
@@ -461,8 +461,13 @@ function FantasyDashboard() {
                 ? [...new Set(seasonData.map(entry => entry.week))].sort((a, b) => a - b)
                 : [];
             
-            // Only show weeks with actual data - no additional weeks
-            return weeksWithData;
+            // Add current week if not already included (for empty column display)
+            const weeksToShow = [...weeksWithData];
+            if (!weeksToShow.includes(currentWeekNumber)) {
+                weeksToShow.push(currentWeekNumber);
+            }
+            
+            return weeksToShow.sort((a, b) => a - b);
         })()
         : Array.from({ length: 14 }, (_, i) => i + 1);
 
