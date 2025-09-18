@@ -102,6 +102,7 @@ This builds the app and publishes `build/` to the `gh-pages` branch. The live si
 
 ### Roadmap ideas
 
+- Constitution
 - Draft Recap
 - Historical Stats Tracker (Championships, Top 6s, Total Points, Points per Season, Playoff %)
 - Trade history
