@@ -312,6 +312,12 @@ td {
     cursor: not-allowed;
 }
 
+.season-select option:disabled {
+    color: #888888;
+    background-color: #444444;
+    cursor: not-allowed;
+}
+
 /* Loading States */
 .loading-container {
     text-align: center;

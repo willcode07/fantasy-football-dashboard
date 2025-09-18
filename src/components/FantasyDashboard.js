@@ -96,6 +96,14 @@ function FantasyDashboard() {
         setLeagueId(LEAGUE_IDS[leagueType][selectedSeason]);
     }, [selectedSeason, leagueType]);
 
+    // Auto-switch to 2025 when Dynasty is selected and current season is not 2025
+    useEffect(() => {
+        if (leagueType === 'dynasty' && selectedSeason !== '2025') {
+            setSelectedSeason('2025');
+            localStorage.setItem('selectedSeason', '2025');
+        }
+    }, [leagueType, selectedSeason]);
+
     // Fetch fresh data
     useEffect(() => {
         let isMounted = true;
@@ -535,13 +543,55 @@ function FantasyDashboard() {
                             disabled={loading && loadingProgress < 100}
                         >
                             <option value="2025">2025 Season (0.0653)</option>
-                            <option value="2024">2024 Season (0.0653)</option>
-                            <option value="2023">2023 Season (0.082)</option>
-                            <option value="2022">2022 Season (0.082)</option>
-                            <option value="2021">2021 Season (0.082)</option>
-                            <option value="2020">2020 Season (0.082)</option>
-                            <option value="2019">2019 Season (0.082)</option>
-                            <option value="2018">2018 Season (0.082)</option>
+                            <option 
+                                value="2024" 
+                                disabled={leagueType === 'dynasty'}
+                                style={leagueType === 'dynasty' ? { color: '#888888' } : {}}
+                            >
+                                2024 Season (0.0653) {leagueType === 'dynasty' ? '(Not Available)' : ''}
+                            </option>
+                            <option 
+                                value="2023" 
+                                disabled={leagueType === 'dynasty'}
+                                style={leagueType === 'dynasty' ? { color: '#888888' } : {}}
+                            >
+                                2023 Season (0.082) {leagueType === 'dynasty' ? '(Not Available)' : ''}
+                            </option>
+                            <option 
+                                value="2022" 
+                                disabled={leagueType === 'dynasty'}
+                                style={leagueType === 'dynasty' ? { color: '#888888' } : {}}
+                            >
+                                2022 Season (0.082) {leagueType === 'dynasty' ? '(Not Available)' : ''}
+                            </option>
+                            <option 
+                                value="2021" 
+                                disabled={leagueType === 'dynasty'}
+                                style={leagueType === 'dynasty' ? { color: '#888888' } : {}}
+                            >
+                                2021 Season (0.082) {leagueType === 'dynasty' ? '(Not Available)' : ''}
+                            </option>
+                            <option 
+                                value="2020" 
+                                disabled={leagueType === 'dynasty'}
+                                style={leagueType === 'dynasty' ? { color: '#888888' } : {}}
+                            >
+                                2020 Season (0.082) {leagueType === 'dynasty' ? '(Not Available)' : ''}
+                            </option>
+                            <option 
+                                value="2019" 
+                                disabled={leagueType === 'dynasty'}
+                                style={leagueType === 'dynasty' ? { color: '#888888' } : {}}
+                            >
+                                2019 Season (0.082) {leagueType === 'dynasty' ? '(Not Available)' : ''}
+                            </option>
+                            <option 
+                                value="2018" 
+                                disabled={leagueType === 'dynasty'}
+                                style={leagueType === 'dynasty' ? { color: '#888888' } : {}}
+                            >
+                                2018 Season (0.082) {leagueType === 'dynasty' ? '(Not Available)' : ''}
+                            </option>
                         </select>
                     </label>
                     {loading && loadingProgress < 100 && (
