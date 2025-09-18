@@ -102,11 +102,10 @@ This builds the app and publishes `build/` to the `gh-pages` branch. The live si
 
 ### Roadmap ideas
 
-- Standings and playoff odds
-- Matchup history per team
-- Simple waiver/FAAB tracker
-- Trade helper (side-by-side comparison)
-- Player projections view
+- Draft Recap
+- Historical Stats Tracker (Championships, Top 6s, Total Points, Points per Season, Playoff %)
+- Trade history
+- Financial burden
 
 ---
 
