@@ -3,16 +3,28 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './FantasyDashboard.css';
 
-// Stable league IDs mapping for each season
+// Stable league IDs mapping for each season and league type
 const LEAGUE_IDS = {
-    '2025': '1243379119207497728',
-    '2024': '1094759154738130944',
-    '2023': '974055073460396032',
-    '2022': '845131315744473088',
-    '2021': '652542582072619008',
-    '2020': '518187294738378752',
-    '2019': '387982074797166592',
-    '2018': '329722904092631040'
+    redraft: {
+        '2025': '1243379119207497728',
+        '2024': '1094759154738130944',
+        '2023': '974055073460396032',
+        '2022': '845131315744473088',
+        '2021': '652542582072619008',
+        '2020': '518187294738378752',
+        '2019': '387982074797166592',
+        '2018': '329722904092631040'
+    },
+    dynasty: {
+        '2025': '1183127627483684864',
+        '2024': '1183127627483684864',
+        '2023': '1183127627483684864',
+        '2022': '1183127627483684864',
+        '2021': '1183127627483684864',
+        '2020': '1183127627483684864',
+        '2019': '1183127627483684864',
+        '2018': '1183127627483684864'
+    }
 };
 
 function FantasyDashboard() {
@@ -20,7 +32,11 @@ function FantasyDashboard() {
         return localStorage.getItem('selectedSeason') || '2025';
     });
 
-    const [leagueId, setLeagueId] = useState(LEAGUE_IDS[selectedSeason]);
+    const [leagueType, setLeagueType] = useState(() => {
+        return localStorage.getItem('leagueType') || 'redraft';
+    });
+
+    const [leagueId, setLeagueId] = useState(LEAGUE_IDS[leagueType][selectedSeason]);
     const [seasonData, setSeasonData] = useState([]);
     const [teamNames, setTeamNames] = useState({});
     const [loading, setLoading] = useState(true);
@@ -64,7 +80,7 @@ function FantasyDashboard() {
 
     // Load cached data immediately
     useEffect(() => {
-        const cachedData = localStorage.getItem(`fantasy_${selectedSeason}`);
+        const cachedData = localStorage.getItem(`fantasy_${leagueType}_${selectedSeason}`);
         if (cachedData) {
             const parsed = JSON.parse(cachedData);
             setTeamNames(parsed.teamNames || {});
@@ -73,12 +89,12 @@ function FantasyDashboard() {
         } else {
             setLoading(true); // Set loading to true if no cached data
         }
-    }, [selectedSeason]);
+    }, [selectedSeason, leagueType]);
 
-    // Update leagueId when selectedSeason changes
+    // Update leagueId when selectedSeason or leagueType changes
     useEffect(() => {
-        setLeagueId(LEAGUE_IDS[selectedSeason]);
-    }, [selectedSeason]);
+        setLeagueId(LEAGUE_IDS[leagueType][selectedSeason]);
+    }, [selectedSeason, leagueType]);
 
     // Fetch fresh data
     useEffect(() => {
@@ -134,15 +150,17 @@ function FantasyDashboard() {
                                 points: matchup.points || 0
                             }));
 
-                            // Only calculate top 6 and MNPS if we have valid scores
+                            // Only calculate top teams and MNPS if we have valid scores
                             if (teamScores.length > 0) {
                                 const sortedScores = [...teamScores].sort((a, b) => b.points - a.points);
-                                const top6Ids = sortedScores.slice(0, 6).map(team => team.roster_id);
+                                // Dynasty: top 5, Redraft: top 6
+                                const topCount = leagueType === 'dynasty' ? 5 : 6;
+                                const topIds = sortedScores.slice(0, topCount).map(team => team.roster_id);
 
                                 const weekData = teamScores.map(({ roster_id, points }) => {
-                                    const isTop6 = top6Ids.includes(roster_id);
-                                    const mnps = isTop6 ? 5 + (points * multiplier) : (points * multiplier);
-                                    return { week, roster_id, points, mnps, isTop6 };
+                                    const isTop = topIds.includes(roster_id);
+                                    const mnps = isTop ? 5 + (points * multiplier) : (points * multiplier);
+                                    return { week, roster_id, points, mnps, isTop };
                                 });
 
                                 // Add week data, avoiding duplicates
@@ -169,7 +187,7 @@ function FantasyDashboard() {
                 }
 
                 // Cache the final data
-                localStorage.setItem(`fantasy_${selectedSeason}`, JSON.stringify({
+                localStorage.setItem(`fantasy_${leagueType}_${selectedSeason}`, JSON.stringify({
                     teamNames: names,
                     seasonData: processedData,
                     timestamp: Date.now()
@@ -192,7 +210,7 @@ function FantasyDashboard() {
         return () => {
             isMounted = false;
         };
-    }, [leagueId, selectedSeason, currentWeekNumber]);
+    }, [leagueId, selectedSeason, leagueType, currentWeekNumber]);
 
     // Get MNPS multiplier helper function
     const getMNPSMultiplier = (season) => {
@@ -201,8 +219,9 @@ function FantasyDashboard() {
 
     // Removed unused seasonTotals calculation to satisfy linter
 
-    // Get top 5 teams by MNPS from regular season (weeks 1-14)
-    const getTop5RegularSeasonByMNPS = () => {
+    // Get top teams by MNPS from regular season (weeks 1-14)
+    // Dynasty: top 4, Redraft: top 5
+    const getTopTeamsRegularSeasonByMNPS = () => {
         const regularSeasonStats = {};
         
         // For projected seasons, only use weeks with actual data (no additional weeks)
@@ -225,24 +244,25 @@ function FantasyDashboard() {
             regularSeasonStats[rosterId].totalMNPS += entry.mnps;
         });
 
-        // Get top 5 roster IDs by MNPS
+        // Get top teams by MNPS (Dynasty: 4, Redraft: 5)
+        const topCount = leagueType === 'dynasty' ? 4 : 5;
         return Object.entries(regularSeasonStats)
             .sort(([, a], [, b]) => b.totalMNPS - a.totalMNPS) // Sort by MNPS instead of points
-            .slice(0, 5)
+            .slice(0, topCount)
             .map(([rosterId, data]) => ({
                 rosterId,
                 regularSeasonMNPS: data.totalMNPS // Store regular season MNPS for display
             }));
     };
 
-    // Calculate championship data for top 5 teams
-    const getChampionshipData = (top5Teams) => {
+    // Calculate championship data for top teams
+    const getChampionshipData = (topTeams) => {
         const championshipStats = {};
-        const top5RosterIds = top5Teams.map(team => team.rosterId);
+        const topRosterIds = topTeams.map(team => team.rosterId);
         
-        // For projected 2025 season, show current top 5 with their current stats
+        // For projected season, show current top teams with their current stats
         if (isProjectedSeason) {
-            top5Teams.forEach(team => {
+            topTeams.forEach(team => {
                 const rosterId = team.rosterId;
                 championshipStats[rosterId] = {
                     teamName: teamNames[rosterId],
@@ -274,7 +294,7 @@ function FantasyDashboard() {
                 .sort(([, a], [, b]) => b.totalMNPS - a.totalMNPS);
         }
         
-        // For completed seasons, get actual playoff weeks data for top 5 teams
+        // For completed seasons, get actual playoff weeks data for top teams
         // Playoff weeks are typically 15-17, but can vary by season
         const playoffStartWeek = 15;
         const playoffEndWeek = 17;
@@ -283,10 +303,10 @@ function FantasyDashboard() {
             if (entry.week < playoffStartWeek || entry.week > playoffEndWeek) return;
             
             const rosterId = entry.roster_id.toString();
-            if (!top5RosterIds.includes(rosterId)) return;
+            if (!topRosterIds.includes(rosterId)) return;
             
             if (!championshipStats[rosterId]) {
-                const teamData = top5Teams.find(team => team.rosterId === rosterId);
+                const teamData = topTeams.find(team => team.rosterId === rosterId);
                 championshipStats[rosterId] = {
                     teamName: teamNames[rosterId],
                     regularSeasonAverageMNPS: teamData ? teamData.regularSeasonAverageMNPS : 0,
@@ -299,7 +319,7 @@ function FantasyDashboard() {
             championshipStats[rosterId].weeks[entry.week] = {
                 points: entry.points,
                 mnps: entry.mnps,
-                isTop6: true // Treat all as top 6 for scoring
+                isTop: true // Treat all as top for scoring
             };
             championshipStats[rosterId].totalPoints += entry.points;
             championshipStats[rosterId].totalMNPS += entry.mnps;
@@ -342,8 +362,8 @@ function FantasyDashboard() {
     };
 
     // Only calculate these if we have data
-    const top5Teams = seasonData.length > 0 ? getTop5RegularSeasonByMNPS() : [];
-    const championshipData = seasonData.length > 0 ? getChampionshipData(top5Teams) : [];
+    const topTeams = seasonData.length > 0 ? getTopTeamsRegularSeasonByMNPS() : [];
+    const championshipData = seasonData.length > 0 ? getChampionshipData(topTeams) : [];
     const champion = championshipData.length > 0 ? championshipData[0] : null;
 
     // Organize team data with sorting capability
@@ -365,7 +385,7 @@ function FantasyDashboard() {
                     weeklyData: {},
                     totalPoints: 0,
                     totalMNPS: 0,
-                    top6Count: 0,  // Add counter for top 6 finishes
+                    topCount: 0,  // Add counter for top finishes
                     regularSeasonGames: 0 // Track number of games for average calculation
                 };
             }
@@ -373,14 +393,14 @@ function FantasyDashboard() {
             teamStats[rosterId].weeklyData[entry.week] = {
                 points: entry.points,
                 mnps: entry.mnps,
-                isTop6: entry.isTop6
+                isTop: entry.isTop
             };
             
             teamStats[rosterId].totalPoints += entry.points;
             teamStats[rosterId].totalMNPS += entry.mnps;
             teamStats[rosterId].regularSeasonGames += 1; // Increment game count
-            if (entry.isTop6) {
-                teamStats[rosterId].top6Count += 1;  // Increment top 6 counter
+            if (entry.isTop) {
+                teamStats[rosterId].topCount += 1;  // Increment top counter
             }
         });
 
@@ -393,7 +413,7 @@ function FantasyDashboard() {
                     weeklyData: {},
                     totalPoints: 0,
                     totalMNPS: 0,
-                    top6Count: 0,
+                    topCount: 0,
                     regularSeasonGames: 0
                 };
             }
@@ -417,7 +437,7 @@ function FantasyDashboard() {
             
             if (sortConfig.key === 'totalPoints' || 
                 sortConfig.key === 'totalMNPS' || 
-                sortConfig.key === 'top6Count') {  // Add sorting for top6Count
+                sortConfig.key === 'topCount') {  // Add sorting for topCount
                 return sortConfig.direction === 'asc'
                     ? a[1][sortConfig.key] - b[1][sortConfig.key]
                     : b[1][sortConfig.key] - a[1][sortConfig.key];
@@ -477,6 +497,34 @@ function FantasyDashboard() {
             <div className="fantasy-dashboard">
                 <h1>Fantasy Football MNPS Dashboard</h1>
                 
+                <div className="league-type-selector">
+                    <label>
+                        League Type:
+                        <div className="league-toggle">
+                            <button 
+                                className={leagueType === 'redraft' ? 'active' : ''}
+                                onClick={() => {
+                                    setLeagueType('redraft');
+                                    localStorage.setItem('leagueType', 'redraft');
+                                }}
+                                disabled={loading && loadingProgress < 100}
+                            >
+                                Redraft
+                            </button>
+                            <button 
+                                className={leagueType === 'dynasty' ? 'active' : ''}
+                                onClick={() => {
+                                    setLeagueType('dynasty');
+                                    localStorage.setItem('leagueType', 'dynasty');
+                                }}
+                                disabled={loading && loadingProgress < 100}
+                            >
+                                Dynasty
+                            </button>
+                        </div>
+                    </label>
+                </div>
+                
                 <div className="season-selector">
                     <label>
                         Select Season:
@@ -526,8 +574,8 @@ function FantasyDashboard() {
                     <>
                         <h2 className="playoff-header">
                             {isProjectedSeason
-                                ? 'Current Playoff Picture - Top 5 MNPS Leaders (Rolling Preview)'
-                                : 'Championship Playoffs - Top 5 MNPS Qualifiers (Weeks 15-17)'}
+                                ? `Current Playoff Picture - Top ${leagueType === 'dynasty' ? '4' : '5'} MNPS Leaders (Rolling Preview)`
+                                : `Championship Playoffs - Top ${leagueType === 'dynasty' ? '4' : '5'} MNPS Qualifiers (Weeks 15-17)`}
                         </h2>
                         <div className="playoff-data">
                             <div className="table-wrapper">
@@ -647,7 +695,7 @@ function FantasyDashboard() {
                             </div>
                         </div>
 
-                        <h2 className="season-header">Regular Season Results (Weeks 1-17)</h2>
+                        <h2 className="season-header">Regular Season Results (Weeks 1-14)</h2>
                         <div className="season-data">
                             <div className="table-wrapper">
                                 <table className="season-table">
@@ -671,9 +719,9 @@ function FantasyDashboard() {
                                             })}
                                             <th 
                                                 className="total-col sortable" 
-                                                onClick={() => handleSort('top6Count')}
+                                                onClick={() => handleSort('topCount')}
                                             >
-                                                Top 6s {getSortIcon('top6Count')}
+                                                Top {leagueType === 'dynasty' ? '5s' : '6s'} {getSortIcon('topCount')}
                                             </th>
                                             <th 
                                                 className="total-col sortable" 
@@ -710,11 +758,11 @@ function FantasyDashboard() {
                                                     }
                                                     
                                                     // For other weeks, show data normally
-                                                    const shouldShowTop6 = weekData && weekData.isTop6;
+                                                    const shouldShowTop = weekData && weekData.isTop;
                                                     return (
                                                         <td 
                                                             key={week} 
-                                                            className={`${shouldShowTop6 ? 'top-6' : ''} ${isFutureWeek ? 'future-week' : ''}`}
+                                                            className={`${shouldShowTop ? 'top-6' : ''} ${isFutureWeek ? 'future-week' : ''}`}
                                                         >
                                                             {weekData ? (
                                                                 <>
@@ -729,8 +777,8 @@ function FantasyDashboard() {
                                                         </td>
                                                     );
                                                 })}
-                                                <td className="total-col top6-count">
-                                                    {data.top6Count}
+                                                <td className="total-col top-count">
+                                                    {data.topCount}
                                                 </td>
                                                 <td className="total-col">{data.totalPoints.toFixed(2)}</td>
                                                 <td className="total-col mnps-total">{data.totalMNPS.toFixed(2)}</td>
