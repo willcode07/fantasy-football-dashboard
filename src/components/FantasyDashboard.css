@@ -121,6 +121,7 @@ button:hover {
     border-bottom: 3px solid #2196f3; /* Primary color */
 }
 
+
 /* Tables */
 .table-wrapper {
     background: #242424; /* Darker table background */
@@ -394,4 +395,37 @@ td {
 
 .future-week:hover {
     background-color: #333333 !important;
+}
+
+
+/* Refresh Controls */
+.refresh-controls {
+    margin-top: 10px;
+    text-align: center;
+    display: none; /* Hide the refresh button */
+}
+
+.refresh-button {
+    background-color: #444444; /* Subtle gray background */
+    color: #b0bec5; /* Muted text color */
+    border: 1px solid #555555;
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 0.8rem;
+    font-weight: 400;
+    opacity: 0.8;
+}
+
+.refresh-button:hover {
+    background-color: #555555;
+    color: #e0e0e0;
+    opacity: 1;
+}
+
+.refresh-button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    background-color: #333333;
 }

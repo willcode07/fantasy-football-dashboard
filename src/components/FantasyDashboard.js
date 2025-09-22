@@ -45,51 +45,117 @@ function FantasyDashboard() {
     const isDarkMode = true; // Set dark mode as default
     const isProjectedSeason = selectedSeason === new Date().getFullYear().toString();
 
-    // Define sortConfig state
+    // Define sortConfig state - default to current week points for live data
     const [sortConfig, setSortConfig] = useState({
         key: 'totalMNPS',  // Default sorting key
         direction: 'desc'  // Default sorting direction
     });
 
-    // Get current week based on date (Tuesday 12am EST)
-    const getCurrentWeekNumber = () => {
-        const now = new Date();
-        const estOffset = -5; // EST is UTC-5
-        const estTime = new Date(now.getTime() + (estOffset * 60 * 60 * 1000));
-        
-        // Get the start of the NFL season based on selected season
-        const seasonStartDates = {
-            '2025': '2025-09-02',
-            '2024': '2024-09-03',
-            '2023': '2023-09-05',
-            '2022': '2022-09-06',
-            '2021': '2021-09-07',
-            '2020': '2020-09-08',
-            '2019': '2019-09-03',
-            '2018': '2018-09-04'
-        };
-        
-        const seasonStart = new Date(seasonStartDates[selectedSeason] || seasonStartDates['2025']);
-        const weeksSinceStart = Math.floor((estTime - seasonStart) / (7 * 24 * 60 * 60 * 1000));
-        
-        // Return current week (1-17) or 1 if before season starts
-        return Math.max(1, Math.min(17, weeksSinceStart + 1));
+    // Get current week by checking actual API data - more reliable than hardcoded dates
+    const getCurrentWeekNumber = async () => {
+        try {
+            // Try to get the current week by checking for weeks with actual game data
+            let currentWeek = 1;
+            
+            // Check weeks 1-18 to find the current week (not just any week with data)
+            for (let week = 1; week <= 18; week++) {
+                try {
+                    const response = await axios.get(`https://api.sleeper.app/v1/league/${leagueId}/matchups/${week}`, {
+                        timeout: 2000 // 2 second timeout for faster response
+                    });
+                    
+                    if (response.data && response.data.length > 0) {
+                        // Check if this week has actual matchup data with real scores
+                        const hasValidData = response.data.some(matchup => 
+                            matchup.points !== null && matchup.points !== undefined && matchup.points > 0
+                        );
+                        
+                        if (hasValidData) {
+                            currentWeek = week;
+                        }
+                    }
+                } catch (error) {
+                    // Week doesn't exist yet, stop checking
+                    break;
+                }
+            }
+            
+            return currentWeek;
+        } catch (error) {
+            console.warn('Failed to get current week from API, using fallback calculation');
+            
+            // Fallback: Use date-based calculation for current year only
+            const now = new Date();
+            const currentYear = now.getFullYear().toString();
+            
+            if (selectedSeason === currentYear) {
+                // For current season, use a more dynamic approach
+                const estOffset = -5; // EST is UTC-5
+                const estTime = new Date(now.getTime() + (estOffset * 60 * 60 * 1000));
+                
+                // Assume NFL season starts around first Thursday of September
+                const septemberFirst = new Date(selectedSeason, 8, 1); // Month is 0-indexed
+                const firstThursday = new Date(septemberFirst);
+                
+                // Find the first Thursday of September
+                while (firstThursday.getDay() !== 4) {
+                    firstThursday.setDate(firstThursday.getDate() + 1);
+                }
+                
+                // NFL season typically starts the Thursday of the first week of September
+                const seasonStart = new Date(firstThursday);
+                seasonStart.setDate(seasonStart.getDate() - 4); // Start counting from the previous Tuesday
+                
+                const weeksSinceStart = Math.floor((estTime - seasonStart) / (7 * 24 * 60 * 60 * 1000));
+                return Math.max(1, Math.min(18, weeksSinceStart + 1));
+            }
+            
+            // For past seasons, use a conservative estimate
+            return selectedSeason === currentYear ? 1 : 17;
+        }
     };
 
-    const currentWeekNumber = getCurrentWeekNumber();
+    const [currentWeekNumber, setCurrentWeekNumber] = useState(1);
+
+    // Fetch current week number
+    useEffect(() => {
+        const fetchCurrentWeek = async () => {
+            try {
+                const week = await getCurrentWeekNumber();
+                setCurrentWeekNumber(week);
+                
+                // Update sort config to current week points for live data
+                setSortConfig({
+                    key: `week_${week}`,
+                    direction: 'desc'
+                });
+            } catch (error) {
+                console.error('Error fetching current week:', error);
+                // Keep default value of 1
+            }
+        };
+
+        fetchCurrentWeek();
+    }, [leagueId, selectedSeason]);
 
     // Load cached data immediately
     useEffect(() => {
         const cachedData = localStorage.getItem(`fantasy_${leagueType}_${selectedSeason}`);
         if (cachedData) {
             const parsed = JSON.parse(cachedData);
+            const cachedSeasonData = parsed.seasonData || [];
+            
+            // Check if we need to refresh data for the current week
+            const hasCurrentWeekData = cachedSeasonData.some(entry => entry.week === currentWeekNumber);
+            const shouldRefresh = isProjectedSeason && !hasCurrentWeekData;
+            
             setTeamNames(parsed.teamNames || {});
-            setSeasonData(parsed.seasonData || []);
-            setLoading(false);
+            setSeasonData(cachedSeasonData);
+            setLoading(shouldRefresh); // Set loading to true if we need to fetch current week data
         } else {
             setLoading(true); // Set loading to true if no cached data
         }
-    }, [selectedSeason, leagueType]);
+    }, [selectedSeason, leagueType, currentWeekNumber, isProjectedSeason]);
 
     // Update leagueId when selectedSeason or leagueType changes
     useEffect(() => {
@@ -112,10 +178,14 @@ function FantasyDashboard() {
             try {
                 setLoadingProgress(0);
                 
-                // Fetch basic data
+                // Fetch basic data with optimized timeouts
                 const [rostersResponse, usersResponse] = await Promise.all([
-                    axios.get(`https://api.sleeper.app/v1/league/${leagueId}/rosters`),
-                    axios.get(`https://api.sleeper.app/v1/league/${leagueId}/users`)
+                    axios.get(`https://api.sleeper.app/v1/league/${leagueId}/rosters`, {
+                        timeout: 3000 // 3 second timeout
+                    }),
+                    axios.get(`https://api.sleeper.app/v1/league/${leagueId}/users`, {
+                        timeout: 3000 // 3 second timeout
+                    })
                 ]);
 
                 if (!isMounted) return;
@@ -129,9 +199,9 @@ function FantasyDashboard() {
                 setTeamNames(names);
 
                 // Fetch weeks in smaller batches
-                // For projected seasons, only fetch weeks with actual data
+                // For projected seasons, fetch up to current week only (no future weeks)
                 // For completed seasons, fetch all 17 weeks
-                const maxWeeksToFetch = isProjectedSeason ? Math.max(2, currentWeekNumber) : 17;
+                const maxWeeksToFetch = isProjectedSeason ? Math.max(1, currentWeekNumber) : 17;
                 const weeks = Array.from({ length: maxWeeksToFetch }, (_, i) => i + 1);
                 const processedData = [];
                 const multiplier = getMNPSMultiplier(selectedSeason);
@@ -143,7 +213,9 @@ function FantasyDashboard() {
                     const batchWeeks = weeks.slice(i, i + 3);
                     const responses = await Promise.all(
                         batchWeeks.map(week => 
-                            axios.get(`https://api.sleeper.app/v1/league/${leagueId}/matchups/${week}`)
+                            axios.get(`https://api.sleeper.app/v1/league/${leagueId}/matchups/${week}`, {
+                                timeout: 2000 // 2 second timeout for faster response
+                            })
                         )
                     );
 
@@ -168,7 +240,7 @@ function FantasyDashboard() {
                                 const weekData = teamScores.map(({ roster_id, points }) => {
                                     const isTop = topIds.includes(roster_id);
                                     const mnps = isTop ? 5 + (points * multiplier) : (points * multiplier);
-                                    return { week, roster_id, points, mnps, isTop };
+                                    return { week, roster_id: roster_id.toString(), points, mnps, isTop };
                                 });
 
                                 // Add week data, avoiding duplicates
@@ -190,8 +262,8 @@ function FantasyDashboard() {
                     setLoadingProgress(progress);
                     setSeasonData([...processedData]);
 
-                    // Small delay between batches
-                    await new Promise(resolve => setTimeout(resolve, 50));
+                    // Minimal delay between batches for faster loading
+                    await new Promise(resolve => setTimeout(resolve, 10));
                 }
 
                 // Cache the final data
@@ -218,7 +290,40 @@ function FantasyDashboard() {
         return () => {
             isMounted = false;
         };
-    }, [leagueId, selectedSeason, leagueType, currentWeekNumber]);
+    }, [leagueId, selectedSeason, leagueType, currentWeekNumber, isProjectedSeason]);
+
+    // Auto-refresh data every minute for maximum live data
+    useEffect(() => {
+        if (!isProjectedSeason) return; // Only auto-refresh for current season
+
+        const refreshInterval = setInterval(async () => {
+            try {
+                // Check if we need to refresh by getting current week
+                const latestWeek = await getCurrentWeekNumber();
+                if (latestWeek > currentWeekNumber) {
+                    console.log(`New week detected: ${latestWeek}, refreshing data`);
+                    setCurrentWeekNumber(latestWeek);
+                    // Update sort to new current week
+                    setSortConfig({
+                        key: `week_${latestWeek}`,
+                        direction: 'desc'
+                    });
+                    // Clear cache to force fresh data fetch
+                    localStorage.removeItem(`fantasy_${leagueType}_${selectedSeason}`);
+                    window.location.reload();
+                } else {
+                    // Even if same week, refresh data for live score updates
+                    console.log('Refreshing live data for current week');
+                    localStorage.removeItem(`fantasy_${leagueType}_${selectedSeason}`);
+                    window.location.reload();
+                }
+            } catch (error) {
+                console.error('Error in auto-refresh:', error);
+            }
+        }, 60 * 1000); // 1 minute for maximum live data updates
+
+        return () => clearInterval(refreshInterval);
+    }, [isProjectedSeason, currentWeekNumber, leagueType, selectedSeason]);
 
     // Get MNPS multiplier helper function
     const getMNPSMultiplier = (season) => {
@@ -234,7 +339,7 @@ function FantasyDashboard() {
         
         // For projected seasons, only use weeks with actual data (no additional weeks)
         // For completed seasons, only use weeks 1-14
-        const maxWeek = isProjectedSeason ? 2 : 14;
+        const maxWeek = isProjectedSeason ? currentWeekNumber : 14;
         
         // Calculate regular season totals
         seasonData.forEach(entry => {
@@ -275,7 +380,7 @@ function FantasyDashboard() {
                 championshipStats[rosterId] = {
                     teamName: teamNames[rosterId],
                     regularSeasonAverageMNPS: team.regularSeasonMNPS / Math.max(1, seasonData.filter(entry => 
-                        entry.roster_id.toString() === rosterId && entry.week <= 2
+                        entry.roster_id.toString() === rosterId && entry.week <= currentWeekNumber
                     ).length), // Calculate average based on games played
                     weeks: {},
                     totalPoints: 0,
@@ -285,7 +390,7 @@ function FantasyDashboard() {
                 
                 // Show current week data if available
                 const teamData = seasonData.filter(entry => 
-                    entry.roster_id.toString() === rosterId && entry.week <= 2
+                    entry.roster_id.toString() === rosterId && entry.week <= currentWeekNumber
                 );
                 
                 teamData.forEach(entry => {
@@ -380,7 +485,7 @@ function FantasyDashboard() {
         
         // For projected seasons, only use weeks with actual data (no additional weeks)
         // For completed seasons, only use weeks 1-14
-        const maxWeek = isProjectedSeason ? 2 : 14;
+        const maxWeek = isProjectedSeason ? currentWeekNumber : 14;
         
         // Initialize team data
         seasonData.forEach(entry => {
@@ -480,13 +585,15 @@ function FantasyDashboard() {
     const teamData = organizeTeamData();
     const sortedTeams = sortData(teamData, sortConfig);
     
-    // For 2025 projected season, show weeks with data plus current week
+    // For 2025 projected season, show only current week and previous weeks (no future weeks)
     // For completed seasons, show weeks 1-14
     const weekNumbers = isProjectedSeason 
         ? (() => {
-            // Get weeks that have actual data
+            // Get weeks that have actual data, but only up to current week
             const weeksWithData = seasonData.length > 0 
-                ? [...new Set(seasonData.map(entry => entry.week))].sort((a, b) => a - b)
+                ? [...new Set(seasonData.map(entry => entry.week))]
+                    .filter(week => week <= currentWeekNumber)
+                    .sort((a, b) => a - b)
                 : [];
             
             // Add current week if not already included (for empty column display)
@@ -606,6 +713,19 @@ function FantasyDashboard() {
                         </div>
                     )}
                     {error && <div className="error-message">{error}</div>}
+                    <div className="refresh-controls">
+                        <button 
+                            onClick={() => {
+                                // Clear cache and force refresh
+                                localStorage.removeItem(`fantasy_${leagueType}_${selectedSeason}`);
+                                window.location.reload();
+                            }}
+                            className="refresh-button"
+                            disabled={loading && loadingProgress < 100}
+                        >
+                            🔄 Refresh Data
+                        </button>
+                    </div>
                 </div>
 
                 {loading ? (
@@ -756,11 +876,10 @@ function FantasyDashboard() {
                                             </th>
                                             {weekNumbers.map(week => {
                                                 const isCurrentWeek = week === currentWeekNumber;
-                                                const isFutureWeek = week > currentWeekNumber;
                                                 return (
                                                     <th 
                                                         key={week} 
-                                                        className={`sortable ${isFutureWeek ? 'future-week' : ''}`}
+                                                        className="sortable"
                                                         onClick={() => handleSort(`week_${week}`)}
                                                     >
                                                         Week {week} {isCurrentWeek ? '(Current)' : ''} {getSortIcon(`week_${week}`)}
@@ -793,26 +912,12 @@ function FantasyDashboard() {
                                                 <td className="sticky-col">{data.teamName}</td>
                                                 {weekNumbers.map(week => {
                                                     const weekData = data.weeklyData[week];
-                                                    const isCurrentWeek = week === currentWeekNumber;
-                                                    const isFutureWeek = week > currentWeekNumber;
-                                                    
-                                                    // For current week, always show "-" with no special styling
-                                                    if (isCurrentWeek) {
-                                                        return (
-                                                            <td 
-                                                                key={week}
-                                                            >
-                                                                -
-                                                            </td>
-                                                        );
-                                                    }
-                                                    
-                                                    // For other weeks, show data normally
                                                     const shouldShowTop = weekData && weekData.isTop;
+                                                    
                                                     return (
                                                         <td 
                                                             key={week} 
-                                                            className={`${shouldShowTop ? 'top-6' : ''} ${isFutureWeek ? 'future-week' : ''}`}
+                                                            className={`${shouldShowTop ? 'top-6' : ''}`}
                                                         >
                                                             {weekData ? (
                                                                 <>
