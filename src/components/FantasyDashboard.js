@@ -755,9 +755,9 @@ function FantasyDashboard() {
                                             <th>Team</th>
                                             {isProjectedSeason ? (
                                                 <>
-                                                    <th>Last Week</th>
-                                                    <th>Best Performance</th>
-                                                    <th>Season Average</th>
+                                                    <th>Week</th>
+                                                    <th>Best</th>
+                                                    <th>Average</th>
                                                 </>
                                             ) : (
                                                 <>
