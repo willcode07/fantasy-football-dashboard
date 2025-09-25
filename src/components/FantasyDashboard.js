@@ -51,6 +51,10 @@ function FantasyDashboard() {
         direction: 'desc'  // Default sorting direction
     });
 
+    // Add refresh state for smooth updates
+    const [isRefreshing, setIsRefreshing] = useState(false);
+    const [refreshTrigger, setRefreshTrigger] = useState(0);
+
     // Get current week by checking actual API data - more reliable than hardcoded dates
     const getCurrentWeekNumber = async () => {
         try {
@@ -290,7 +294,39 @@ function FantasyDashboard() {
         return () => {
             isMounted = false;
         };
-    }, [leagueId, selectedSeason, leagueType, currentWeekNumber, isProjectedSeason]);
+    }, [leagueId, selectedSeason, leagueType, currentWeekNumber, isProjectedSeason, refreshTrigger]);
+
+    // Smooth refresh function without hard reload
+    const triggerSmoothRefresh = async (newWeek = null) => {
+        try {
+            setIsRefreshing(true);
+            
+            // Clear cache to force fresh data fetch
+            localStorage.removeItem(`fantasy_${leagueType}_${selectedSeason}`);
+            
+            // Update current week if new week detected
+            if (newWeek && newWeek > currentWeekNumber) {
+                console.log(`New week detected: ${newWeek}, refreshing data`);
+                setCurrentWeekNumber(newWeek);
+                // Update sort to new current week
+                setSortConfig({
+                    key: `week_${newWeek}`,
+                    direction: 'desc'
+                });
+            } else {
+                console.log('Refreshing live data for current week');
+            }
+            
+            // Trigger data refetch by incrementing refresh trigger
+            setRefreshTrigger(prev => prev + 1);
+            
+        } catch (error) {
+            console.error('Error in smooth refresh:', error);
+        } finally {
+            // Reset refreshing state after a brief delay for visual feedback
+            setTimeout(() => setIsRefreshing(false), 500);
+        }
+    };
 
     // Auto-refresh data every minute for maximum live data
     useEffect(() => {
@@ -301,21 +337,10 @@ function FantasyDashboard() {
                 // Check if we need to refresh by getting current week
                 const latestWeek = await getCurrentWeekNumber();
                 if (latestWeek > currentWeekNumber) {
-                    console.log(`New week detected: ${latestWeek}, refreshing data`);
-                    setCurrentWeekNumber(latestWeek);
-                    // Update sort to new current week
-                    setSortConfig({
-                        key: `week_${latestWeek}`,
-                        direction: 'desc'
-                    });
-                    // Clear cache to force fresh data fetch
-                    localStorage.removeItem(`fantasy_${leagueType}_${selectedSeason}`);
-                    window.location.reload();
+                    await triggerSmoothRefresh(latestWeek);
                 } else {
                     // Even if same week, refresh data for live score updates
-                    console.log('Refreshing live data for current week');
-                    localStorage.removeItem(`fantasy_${leagueType}_${selectedSeason}`);
-                    window.location.reload();
+                    await triggerSmoothRefresh();
                 }
             } catch (error) {
                 console.error('Error in auto-refresh:', error);
@@ -715,15 +740,11 @@ function FantasyDashboard() {
                     {error && <div className="error-message">{error}</div>}
                     <div className="refresh-controls">
                         <button 
-                            onClick={() => {
-                                // Clear cache and force refresh
-                                localStorage.removeItem(`fantasy_${leagueType}_${selectedSeason}`);
-                                window.location.reload();
-                            }}
+                            onClick={() => triggerSmoothRefresh()}
                             className="refresh-button"
-                            disabled={loading && loadingProgress < 100}
+                            disabled={(loading && loadingProgress < 100) || isRefreshing}
                         >
-                            🔄 Refresh Data
+                            {isRefreshing ? '🔄 Refreshing...' : '🔄 Refresh Data'}
                         </button>
                     </div>
                 </div>
@@ -736,8 +757,8 @@ function FantasyDashboard() {
                 ) : error ? (
                     <div className="error-container">
                         <p>{error}</p>
-                        <button onClick={() => window.location.reload()}>
-                            Retry
+                        <button onClick={() => triggerSmoothRefresh()}>
+                            {isRefreshing ? 'Retrying...' : 'Retry'}
                         </button>
                     </div>
                 ) : (

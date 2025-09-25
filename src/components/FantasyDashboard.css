@@ -402,7 +402,7 @@ td {
 .refresh-controls {
     margin-top: 10px;
     text-align: center;
-    display: none; /* Hide the refresh button */
+    display: block; /* Show the refresh button for manual control */
 }
 
 .refresh-button {
@@ -416,16 +416,35 @@ td {
     font-size: 0.8rem;
     font-weight: 400;
     opacity: 0.8;
+    position: relative;
+    overflow: hidden;
 }
 
-.refresh-button:hover {
+.refresh-button:hover:not(:disabled) {
     background-color: #555555;
     color: #e0e0e0;
     opacity: 1;
 }
 
 .refresh-button:disabled {
-    opacity: 0.4;
+    opacity: 0.6;
     cursor: not-allowed;
     background-color: #333333;
+}
+
+/* Add subtle animation for refreshing state */
+.refresh-button:disabled::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+    animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+    0% { left: -100%; }
+    100% { left: 100%; }
 }
