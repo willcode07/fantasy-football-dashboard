@@ -402,7 +402,7 @@ td {
 .refresh-controls {
     margin-top: 10px;
     text-align: center;
-    display: block; /* Show the refresh button for manual control */
+    display: none; /* Hide the refresh button */
 }
 
 .refresh-button {
