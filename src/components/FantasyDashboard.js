@@ -362,9 +362,9 @@ function FantasyDashboard() {
     const getTopTeamsRegularSeasonByMNPS = () => {
         const regularSeasonStats = {};
         
-        // For projected seasons, only use weeks with actual data (no additional weeks)
-        // For completed seasons, only use weeks 1-14
-        const maxWeek = isProjectedSeason ? currentWeekNumber : 14;
+        // Regular season is always weeks 1-14, regardless of current week
+        // This ensures playoff weeks (15-17) are never included in regular season stats
+        const maxWeek = 14;
         
         // Calculate regular season totals
         seasonData.forEach(entry => {
@@ -397,8 +397,71 @@ function FantasyDashboard() {
     const getChampionshipData = (topTeams) => {
         const championshipStats = {};
         const topRosterIds = topTeams.map(team => team.rosterId);
+        const playoffStartWeek = 15;
+        const playoffEndWeek = 17;
+        const isInPlayoffChampionship = isProjectedSeason && currentWeekNumber >= playoffStartWeek;
         
-        // For projected season, show current top teams with their current stats
+        // For projected season during weeks 15-17, show Playoff Championship with scoring from scratch
+        if (isInPlayoffChampionship) {
+            // Include ALL teams, not just top teams, for championship
+            const allRosterIds = [...new Set(seasonData.map(entry => entry.roster_id.toString()))];
+            
+            allRosterIds.forEach(rosterId => {
+                championshipStats[rosterId] = {
+                    teamName: teamNames[rosterId] || `Team ${rosterId}`,
+                    weeks: {},
+                    totalPoints: 0,
+                    totalMNPS: 0,
+                    isProjected: true
+                };
+                
+                // Only count weeks 15-17 for championship
+                const playoffData = seasonData.filter(entry => 
+                    entry.roster_id.toString() === rosterId && 
+                    entry.week >= playoffStartWeek && 
+                    entry.week <= Math.min(playoffEndWeek, currentWeekNumber)
+                );
+                
+                playoffData.forEach(entry => {
+                    championshipStats[rosterId].weeks[entry.week] = {
+                        points: entry.points,
+                        mnps: entry.mnps,
+                        isTop6: entry.isTop6,
+                        isHighest: false // Initialize
+                    };
+                    championshipStats[rosterId].totalPoints += entry.points;
+                    championshipStats[rosterId].totalMNPS += entry.mnps;
+                });
+            });
+            
+            // Highlight highest scores for each week
+            const highestScores = {};
+            Object.entries(championshipStats).forEach(([rosterId, data]) => {
+                for (let week = playoffStartWeek; week <= Math.min(playoffEndWeek, currentWeekNumber); week++) {
+                    if (data.weeks[week]) {
+                        const weekPoints = data.weeks[week].points;
+                        if (!highestScores[week] || weekPoints > highestScores[week].points) {
+                            highestScores[week] = { points: weekPoints, rosterId };
+                        }
+                    }
+                }
+            });
+            
+            // Mark the highest scores
+            Object.entries(championshipStats).forEach(([rosterId, data]) => {
+                for (let week = playoffStartWeek; week <= Math.min(playoffEndWeek, currentWeekNumber); week++) {
+                    if (data.weeks[week] && data.weeks[week].points === highestScores[week]?.points) {
+                        data.weeks[week].isHighest = true;
+                    }
+                }
+            });
+            
+            return Object.entries(championshipStats)
+                .filter(([, data]) => data.totalMNPS > 0) // Only show teams with playoff data
+                .sort(([, a], [, b]) => b.totalMNPS - a.totalMNPS);
+        }
+        
+        // For projected season before week 15, show current top teams with their current stats
         if (isProjectedSeason) {
             topTeams.forEach(team => {
                 const rosterId = team.rosterId;
@@ -434,8 +497,7 @@ function FantasyDashboard() {
         
         // For completed seasons, get actual playoff weeks data for top teams
         // Playoff weeks are typically 15-17, but can vary by season
-        const playoffStartWeek = 15;
-        const playoffEndWeek = 17;
+        // Note: playoffStartWeek and playoffEndWeek are already declared at the top of this function
         
         seasonData.forEach(entry => {
             if (entry.week < playoffStartWeek || entry.week > playoffEndWeek) return;
@@ -496,7 +558,7 @@ function FantasyDashboard() {
         });
 
         return Object.entries(championshipStats)
-            .sort(([, a], [, b]) => b.totalPoints - a.totalPoints);
+            .sort(([, a], [, b]) => b.totalMNPS - a.totalMNPS); // Sort by MNPS, not points
     };
 
     // Only calculate these if we have data
@@ -508,9 +570,9 @@ function FantasyDashboard() {
     const organizeTeamData = () => {
         const teamStats = {};
         
-        // For projected seasons, only use weeks with actual data (no additional weeks)
-        // For completed seasons, only use weeks 1-14
-        const maxWeek = isProjectedSeason ? currentWeekNumber : 14;
+        // Regular season is always weeks 1-14, regardless of current week
+        // This ensures playoff weeks (15-17) are never included in regular season stats
+        const maxWeek = 14;
         
         // Initialize team data
         seasonData.forEach(entry => {
@@ -610,26 +672,25 @@ function FantasyDashboard() {
     const teamData = organizeTeamData();
     const sortedTeams = sortData(teamData, sortConfig);
     
-    // For 2025 projected season, show only current week and previous weeks (no future weeks)
-    // For completed seasons, show weeks 1-14
-    const weekNumbers = isProjectedSeason 
-        ? (() => {
-            // Get weeks that have actual data, but only up to current week
-            const weeksWithData = seasonData.length > 0 
-                ? [...new Set(seasonData.map(entry => entry.week))]
-                    .filter(week => week <= currentWeekNumber)
-                    .sort((a, b) => a - b)
-                : [];
-            
-            // Add current week if not already included (for empty column display)
-            const weeksToShow = [...weeksWithData];
-            if (!weeksToShow.includes(currentWeekNumber)) {
-                weeksToShow.push(currentWeekNumber);
-            }
-            
-            return weeksToShow.sort((a, b) => a - b);
-        })()
-        : Array.from({ length: 14 }, (_, i) => i + 1);
+    // Regular season table always shows weeks 1-14, regardless of current week
+    // This ensures playoff weeks (15-17) are never shown in the regular season table
+    const weekNumbers = (() => {
+        // Get weeks that have actual data, but only weeks 1-14 (regular season)
+        const weeksWithData = seasonData.length > 0 
+            ? [...new Set(seasonData.map(entry => entry.week))]
+                .filter(week => week <= 14) // Only regular season weeks
+                .sort((a, b) => a - b)
+            : [];
+        
+        // For projected seasons, show weeks 1-14 that have data
+        // For completed seasons, always show weeks 1-14
+        if (weeksWithData.length > 0) {
+            return weeksWithData;
+        } else {
+            // If no data yet, show all weeks 1-14
+            return Array.from({ length: 14 }, (_, i) => i + 1);
+        }
+    })();
 
 
     return (
@@ -764,7 +825,9 @@ function FantasyDashboard() {
                 ) : (
                     <>
                         <h2 className="playoff-header">
-                            {isProjectedSeason
+                            {isProjectedSeason && currentWeekNumber >= 15
+                                ? `Playoff Championship - Weeks 15-17 (May the Best Team Win!)`
+                                : isProjectedSeason
                                 ? `Current Playoff Picture - Top ${leagueType === 'dynasty' ? '4' : '5'} MNPS Leaders (Rolling Preview)`
                                 : `Championship Playoffs - Top ${leagueType === 'dynasty' ? '4' : '5'} MNPS Qualifiers (Weeks 15-17)`}
                         </h2>
@@ -774,7 +837,13 @@ function FantasyDashboard() {
                                     <thead>
                                         <tr>
                                             <th>Team</th>
-                                            {isProjectedSeason ? (
+                                            {isProjectedSeason && currentWeekNumber >= 15 ? (
+                                                <>
+                                                    <th>Week 15</th>
+                                                    <th>Week 16</th>
+                                                    <th>Week 17</th>
+                                                </>
+                                            ) : isProjectedSeason ? (
                                                 <>
                                                     <th>Last</th>
                                                     <th>Best</th>
@@ -787,20 +856,38 @@ function FantasyDashboard() {
                                                     <th>Week 17</th>
                                                 </>
                                             )}
-                                            <th>{isProjectedSeason ? 'Total Points' : 'Playoff Points'}</th>
-                                            <th>{isProjectedSeason ? 'Total MNPS' : 'Playoff MNPS'}</th>
+                                            <th>{isProjectedSeason && currentWeekNumber >= 15 ? 'Championship Points' : isProjectedSeason ? 'Total Points' : 'Playoff Points'}</th>
+                                            <th>{isProjectedSeason && currentWeekNumber >= 15 ? 'Championship MNPS' : isProjectedSeason ? 'Total MNPS' : 'Playoff MNPS'}</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {championshipData.map(([rosterId, data]) => (
-                                            <tr key={rosterId} className={!isProjectedSeason && rosterId === champion?.[0] ? 'champion-row' : ''}>
+                                            <tr key={rosterId} className={(!isProjectedSeason || (isProjectedSeason && currentWeekNumber >= 17)) && rosterId === champion?.[0] ? 'champion-row' : ''}>
                                                 <td className="team-name">
                                                     {data.teamName}
-                                                    {!isProjectedSeason && rosterId === champion?.[0] && 
+                                                    {(!isProjectedSeason || (isProjectedSeason && currentWeekNumber >= 17)) && rosterId === champion?.[0] && 
                                                         <span className="champion-badge">🏆 Champion</span>
                                                     }
                                                 </td>
-                                                {isProjectedSeason ? (
+                                                {isProjectedSeason && currentWeekNumber >= 15 ? (
+                                                    [15, 16, 17].map(week => (
+                                                        <td 
+                                                            key={week} 
+                                                            className={data.weeks[week] && data.weeks[week].isHighest ? 'top-6' : ''}
+                                                        >
+                                                            {data.weeks[week] ? (
+                                                                <>
+                                                                    <div className="points">
+                                                                        {data.weeks[week].points.toFixed(2)}
+                                                                    </div>
+                                                                    <div className="mnps">
+                                                                        {data.weeks[week].mnps.toFixed(2)}
+                                                                    </div>
+                                                                </>
+                                                            ) : '-'}
+                                                        </td>
+                                                    ))
+                                                ) : isProjectedSeason ? (
                                                     <>
                                                         <td className="last-week">
                                                             {(() => {
