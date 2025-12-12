@@ -243,7 +243,8 @@ function FantasyDashboard() {
 
                                 const weekData = teamScores.map(({ roster_id, points }) => {
                                     const isTop = topIds.includes(roster_id);
-                                    const mnps = isTop ? 5 + (points * multiplier) : (points * multiplier);
+                                    // If points = 0, MNPS should be 0 regardless of top status
+                                    const mnps = points === 0 ? 0 : (isTop ? 5 + (points * multiplier) : (points * multiplier));
                                     return { week, roster_id: roster_id.toString(), points, mnps, isTop };
                                 });
 
