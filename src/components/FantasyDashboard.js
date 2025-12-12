@@ -144,10 +144,19 @@ function FantasyDashboard() {
 
     // Load cached data immediately
     useEffect(() => {
+        const cacheVersion = "v2.1"; // Increment when MNPS calculation logic changes
         const cachedData = localStorage.getItem(`fantasy_${leagueType}_${selectedSeason}`);
         if (cachedData) {
             const parsed = JSON.parse(cachedData);
             const cachedSeasonData = parsed.seasonData || [];
+            
+            // Check cache version - if outdated, force refresh
+            if (parsed.version !== cacheVersion) {
+                console.log('Cache version outdated, forcing refresh for MNPS calculation fix');
+                localStorage.removeItem(`fantasy_${leagueType}_${selectedSeason}`);
+                setLoading(true);
+                return;
+            }
             
             // Check if we need to refresh data for the current week
             const hasCurrentWeekData = cachedSeasonData.some(entry => entry.week === currentWeekNumber);
@@ -243,8 +252,8 @@ function FantasyDashboard() {
 
                                 const weekData = teamScores.map(({ roster_id, points }) => {
                                     const isTop = topIds.includes(roster_id);
-                                    // If points = 0, MNPS should be 0 regardless of top status
-                                    const mnps = points === 0 ? 0 : (isTop ? 5 + (points * multiplier) : (points * multiplier));
+                                    // If points = 0, null, or undefined, MNPS should be 0 regardless of top status
+                                    const mnps = (!points || points === 0) ? 0 : (isTop ? 5 + (points * multiplier) : (points * multiplier));
                                     return { week, roster_id: roster_id.toString(), points, mnps, isTop };
                                 });
 
@@ -273,6 +282,7 @@ function FantasyDashboard() {
 
                 // Cache the final data
                 localStorage.setItem(`fantasy_${leagueType}_${selectedSeason}`, JSON.stringify({
+                    version: "v2.1", // Cache version for MNPS calculation logic
                     teamNames: names,
                     seasonData: processedData,
                     timestamp: Date.now()
