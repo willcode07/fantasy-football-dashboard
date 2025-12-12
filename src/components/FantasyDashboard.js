@@ -403,10 +403,8 @@ function FantasyDashboard() {
         
         // For projected season during weeks 15-17, show Playoff Championship with scoring from scratch
         if (isInPlayoffChampionship) {
-            // Include ALL teams, not just top teams, for championship
-            const allRosterIds = [...new Set(seasonData.map(entry => entry.roster_id.toString()))];
-            
-            allRosterIds.forEach(rosterId => {
+            // Include ONLY the top 5 MNPS teams from regular season for championship
+            topRosterIds.forEach(rosterId => {
                 championshipStats[rosterId] = {
                     teamName: teamNames[rosterId] || `Team ${rosterId}`,
                     weeks: {},
@@ -457,7 +455,6 @@ function FantasyDashboard() {
             });
             
             return Object.entries(championshipStats)
-                .filter(([, data]) => data.totalMNPS > 0) // Only show teams with playoff data
                 .sort(([, a], [, b]) => b.totalMNPS - a.totalMNPS);
         }
         
