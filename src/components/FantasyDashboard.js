@@ -435,7 +435,7 @@ function FantasyDashboard() {
                     championshipStats[rosterId].weeks[entry.week] = {
                         points: entry.points,
                         mnps: entry.mnps,
-                        isTop6: entry.isTop6,
+                        isTop: entry.isTop,
                         isHighest: false // Initialize
                     };
                     championshipStats[rosterId].totalPoints += entry.points;
@@ -493,7 +493,7 @@ function FantasyDashboard() {
                     championshipStats[rosterId].weeks[entry.week] = {
                         points: entry.points,
                         mnps: entry.mnps,
-                        isTop6: entry.isTop6
+                        isTop: entry.isTop
                     };
                     championshipStats[rosterId].totalPoints += entry.points;
                 });
