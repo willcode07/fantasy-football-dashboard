@@ -6,6 +6,7 @@ import './FantasyDashboard.css';
 // Stable league IDs mapping for each season and league type
 const LEAGUE_IDS = {
     redraft: {
+        '2026': '1377319553851228160',
         '2025': '1243379119207497728',
         '2024': '1094759154738130944',
         '2023': '974055073460396032',
@@ -16,6 +17,7 @@ const LEAGUE_IDS = {
         '2018': '329722904092631040'
     },
     dynasty: {
+        '2026': '1317708035182858240',
         '2025': '1183127627483684864',
         '2024': '1183127627483684864',
         '2023': '1183127627483684864',
@@ -29,7 +31,7 @@ const LEAGUE_IDS = {
 
 function FantasyDashboard() {
     const [selectedSeason, setSelectedSeason] = useState(() => {
-        return localStorage.getItem('selectedSeason') || '2025';
+        return localStorage.getItem('selectedSeason') || '2026';
     });
 
     const [leagueType, setLeagueType] = useState(() => {
@@ -144,7 +146,7 @@ function FantasyDashboard() {
 
     // Load cached data immediately
     useEffect(() => {
-        const cacheVersion = "v2.1"; // Increment when MNPS calculation logic changes
+        const cacheVersion = "v2.2"; // Increment when MNPS calculation logic changes
         const cachedData = localStorage.getItem(`fantasy_${leagueType}_${selectedSeason}`);
         if (cachedData) {
             const parsed = JSON.parse(cachedData);
@@ -175,11 +177,11 @@ function FantasyDashboard() {
         setLeagueId(LEAGUE_IDS[leagueType][selectedSeason]);
     }, [selectedSeason, leagueType]);
 
-    // Auto-switch to 2025 when Dynasty is selected and current season is not 2025
+    // Auto-switch to 2026 when Dynasty is selected and current season is not 2026
     useEffect(() => {
-        if (leagueType === 'dynasty' && selectedSeason !== '2025') {
-            setSelectedSeason('2025');
-            localStorage.setItem('selectedSeason', '2025');
+        if (leagueType === 'dynasty' && selectedSeason !== '2026') {
+            setSelectedSeason('2026');
+            localStorage.setItem('selectedSeason', '2026');
         }
     }, [leagueType, selectedSeason]);
 
@@ -245,13 +247,18 @@ function FantasyDashboard() {
 
                             // Only calculate top teams and MNPS if we have valid scores
                             if (teamScores.length > 0) {
+                                // Don't award top finishes until at least one point has been scored
+                                // (Sleeper creates 0-point matchup stubs before games begin)
+                                const hasScoringStarted = teamScores.some(team => team.points > 0);
                                 const sortedScores = [...teamScores].sort((a, b) => b.points - a.points);
                                 // Dynasty: top 5, Redraft: top 6
                                 const topCount = leagueType === 'dynasty' ? 5 : 6;
-                                const topIds = sortedScores.slice(0, topCount).map(team => team.roster_id);
+                                const topIds = hasScoringStarted
+                                    ? sortedScores.slice(0, topCount).map(team => team.roster_id)
+                                    : [];
 
                                 const weekData = teamScores.map(({ roster_id, points }) => {
-                                    const isTop = topIds.includes(roster_id);
+                                    const isTop = hasScoringStarted && points > 0 && topIds.includes(roster_id);
                                     // If points = 0, null, or undefined, MNPS should be 0 regardless of top status
                                     const mnps = (!points || points === 0) ? 0 : (isTop ? 5 + (points * multiplier) : (points * multiplier));
                                     return { week, roster_id: roster_id.toString(), points, mnps, isTop };
@@ -282,7 +289,7 @@ function FantasyDashboard() {
 
                 // Cache the final data
                 localStorage.setItem(`fantasy_${leagueType}_${selectedSeason}`, JSON.stringify({
-                    version: "v2.1", // Cache version for MNPS calculation logic
+                    version: "v2.2", // Cache version for MNPS calculation logic
                     teamNames: names,
                     seasonData: processedData,
                     timestamp: Date.now()
@@ -612,7 +619,7 @@ function FantasyDashboard() {
             }
         });
 
-        // Ensure teams appear even if there is no weekly data yet (e.g., early 2025)
+        // Ensure teams appear even if there is no weekly data yet (e.g., pre-draft)
         Object.keys(teamNames || {}).forEach((rid) => {
             const rosterId = rid.toString();
             if (!teamStats[rosterId]) {
@@ -739,11 +746,21 @@ function FantasyDashboard() {
                         Select Season:
                         <select 
                             value={selectedSeason} 
-                            onChange={(e) => setSelectedSeason(e.target.value)}
+                            onChange={(e) => {
+                                setSelectedSeason(e.target.value);
+                                localStorage.setItem('selectedSeason', e.target.value);
+                            }}
                             className="season-select"
                             disabled={loading && loadingProgress < 100}
                         >
-                            <option value="2025">2025 Season (0.0653)</option>
+                            <option value="2026">2026 Season (0.0653)</option>
+                            <option 
+                                value="2025" 
+                                disabled={leagueType === 'dynasty'}
+                                style={leagueType === 'dynasty' ? { color: '#888888' } : {}}
+                            >
+                                2025 Season (0.0653) {leagueType === 'dynasty' ? '(Not Available)' : ''}
+                            </option>
                             <option 
                                 value="2024" 
                                 disabled={leagueType === 'dynasty'}
