@@ -7,8 +7,29 @@ const { A2AClient } = require('./a2a-client');
 const DEFAULT_LEAGUE_ID = '1243379119207497728';
 
 // Two agents negotiate one trade, then stop. Approval is left for the human owners.
-async function runDemo({ baseUrl, leagueId = DEFAULT_LEAGUE_ID, leagueCode } = {}) {
+async function sleeperOwnerId(leagueId, teamId) {
+    const response = await fetch(`https://api.sleeper.app/v1/league/${encodeURIComponent(leagueId)}/rosters`, {
+        signal: AbortSignal.timeout(5000)
+    });
+    if (!response.ok) {
+        throw new Error('Could not read Sleeper rosters to find the owner id.');
+    }
+    const rosters = await response.json();
+    const roster = Array.isArray(rosters)
+        ? rosters.find((item) => String(item.roster_id) === String(teamId))
+        : null;
+    if (!roster || !roster.owner_id) {
+        throw new Error(`Sleeper roster ${teamId} has no owner id.`);
+    }
+    return String(roster.owner_id);
+}
+
+async function runDemo({ baseUrl, leagueId = DEFAULT_LEAGUE_ID, leagueCode, sleeperOwnerIds } = {}) {
     if (!baseUrl) throw new Error('baseUrl is required');
+    const ownerIds = sleeperOwnerIds || {
+        1: await sleeperOwnerId(leagueId, '1'),
+        2: await sleeperOwnerId(leagueId, '2')
+    };
 
     const gridiron = await A2AClient.register({
         baseUrl,
@@ -17,7 +38,8 @@ async function runDemo({ baseUrl, leagueId = DEFAULT_LEAGUE_ID, leagueCode } = {
         teamName: 'Gridiron AI',
         leagueId,
         name: 'Gridiron Negotiator',
-        description: 'Mocks an owner agent that shops wide receivers.'
+        description: 'Mocks an owner agent that shops wide receivers.',
+        sleeperOwnerId: ownerIds[1] || ownerIds['1']
     });
     const wolf = await A2AClient.register({
         baseUrl,
@@ -26,7 +48,8 @@ async function runDemo({ baseUrl, leagueId = DEFAULT_LEAGUE_ID, leagueCode } = {
         teamName: 'Waiver Wolf',
         leagueId,
         name: 'Waiver Wolf',
-        description: 'Mocks an owner agent that answers trade offers.'
+        description: 'Mocks an owner agent that answers trade offers.',
+        sleeperOwnerId: ownerIds[2] || ownerIds['2']
     });
 
     const proposed = await gridiron.client.createTask({

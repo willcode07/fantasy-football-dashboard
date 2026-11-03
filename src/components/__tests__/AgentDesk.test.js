@@ -128,7 +128,9 @@ describe('AgentDesk', () => {
         await screen.findByText(/desk connected/i);
 
         fireEvent.change(screen.getByLabelText('League team'), { target: { value: '4' } });
-        fireEvent.change(screen.getByLabelText('League code'), { target: { value: 'sesame' } });
+        fireEvent.change(screen.getByLabelText('League code'), { target: { value: '226' } });
+        fireEvent.change(screen.getByLabelText('Sleeper user id'), { target: { value: 'user-4' } });
+        expect(screen.getByLabelText('League code')).toHaveValue('226');
         expect(screen.getByLabelText('Team name')).toHaveValue('Bench Mob');
         fireEvent.click(screen.getByRole('button', { name: 'Connect agent' }));
 
@@ -136,9 +138,14 @@ describe('AgentDesk', () => {
         expect(screen.getByLabelText('Issued agent token')).toHaveValue('agent-token-value');
         expect(axios.post).toHaveBeenCalledWith(
             '/api/a2a/agents',
-            expect.objectContaining({ teamId: '4', teamName: 'Bench Mob', leagueId: 'league-1' }),
             expect.objectContaining({
-                headers: { 'X-League-Code': 'sesame' }
+                teamId: '4',
+                teamName: 'Bench Mob',
+                leagueId: 'league-1',
+                sleeperOwnerId: 'user-4'
+            }),
+            expect.objectContaining({
+                headers: { 'X-League-Code': '226' }
             })
         );
     });

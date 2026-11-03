@@ -8,7 +8,7 @@ const test = require('node:test');
 const { A2AClient } = require('../../examples/a2a-client');
 const { runDemo } = require('../../examples/mock-agents');
 const { createDesk } = require('./desk');
-const { createA2AServer, createRateLimiter, defaultNotify } = require('./http');
+const { createA2AServer, createAttemptLockout, createRateLimiter, defaultNotify } = require('./http');
 
 const LEAGUE_CODE = 'test-league-code';
 const PUBLIC_LOOKUP = async () => [{ address: '93.184.216.34', family: 4 }];
@@ -45,7 +45,8 @@ async function withServer(options, fn) {
             }
         },
         lookup: options.lookup || PUBLIC_LOOKUP,
-        secretKey: options.secretKey || crypto.createHash('sha256').update('a2a-test-secret').digest()
+        secretKey: options.secretKey || crypto.createHash('sha256').update('a2a-test-secret').digest(),
+        webhookTransport: options.webhookTransport
     });
     const publicBase = options.publicBase || 'http://127.0.0.1:8787';
     const server = createA2AServer({
@@ -68,6 +69,9 @@ function team(number, extra = {}) {
         teamName: extra.teamName || `Team ${number}`,
         leagueId: extra.leagueId || 'lg',
         name: extra.name || `Team ${number} Agent`,
+        sleeperOwnerId: Object.prototype.hasOwnProperty.call(extra, 'sleeperOwnerId')
+            ? extra.sleeperOwnerId
+            : `user-${number}`,
         ...extra.fields
     };
 }
@@ -148,7 +152,12 @@ test('public agent list hides tokens and webhook secrets', async () => {
 
 test('example agents negotiate a trade and owners approve without execution', async () => {
     await withServer(async ({ base }) => {
-        const result = await runDemo({ baseUrl: base, leagueId: 'lg', leagueCode: LEAGUE_CODE });
+        const result = await runDemo({
+            baseUrl: base,
+            leagueId: 'lg',
+            leagueCode: LEAGUE_CODE,
+            sleeperOwnerIds: { 1: 'user-1', 2: 'user-2' }
+        });
         assert.equal(result.task.status.state, 'input-required');
         assert.equal(result.task.executed, false);
         assert.equal(result.task.kind, 'trade');
@@ -347,68 +356,131 @@ test('rejects query tokens, huge bodies, and an agent trading with itself', asyn
 
 test('delivery rechecks the webhook and will not call a local address', async () => {
     let called = false;
+    let transported = 0;
     const previous = global.fetch;
     global.fetch = async () => {
         called = true;
         return new Response(null, { status: 204 });
     };
+    const transport = async () => {
+        transported += 1;
+    };
     try {
         await assert.rejects(
-            () => defaultNotify({ webhookUrl: 'http://127.0.0.1/hook', lookup: PUBLIC_LOOKUP }, { event: 'task.created' }),
+            () => defaultNotify({
+                webhookUrl: 'http://127.0.0.1/hook',
+                lookup: PUBLIC_LOOKUP,
+                transport
+            }, { event: 'task.created' }),
             (error) => error.status === 400
         );
         await assert.rejects(
             () => defaultNotify({
                 webhookUrl: 'https://hooks.example.com/hook',
-                lookup: async () => [{ address: '192.168.0.8', family: 4 }]
+                lookup: async () => [{ address: '192.168.0.8', family: 4 }],
+                transport
+            }, { event: 'task.created' }),
+            (error) => error.status === 400
+        );
+        await assert.rejects(
+            () => defaultNotify({
+                webhookUrl: 'https://hooks.example.com/hook',
+                lookup: async () => [{ address: '10.0.0.1', family: 4 }],
+                transport
             }, { event: 'task.created' }),
             (error) => error.status === 400
         );
         assert.equal(called, false);
+        assert.equal(transported, 0);
     } finally {
         global.fetch = previous;
     }
 });
 
+test('webhook delivery stays pinned to the address resolved before connect', async () => {
+    let lookups = 0;
+    const lookup = async () => {
+        lookups += 1;
+        if (lookups > 1) return [{ address: '10.0.0.1', family: 4 }];
+        return [{ address: '93.184.216.34', family: 4 }];
+    };
+    let seen = null;
+    await defaultNotify({
+        webhookUrl: 'https://hooks.example.com/hook',
+        webhookSecret: 'pin-secret',
+        lookup,
+        transport: async (options, body) => {
+            const pinned = await new Promise((resolve, reject) => {
+                options.lookup('rebind.example', {}, (error, address, family) => {
+                    if (error) reject(error);
+                    else resolve({ address, family });
+                });
+            });
+            seen = {
+                address: options.address,
+                hostname: options.hostname,
+                servername: options.servername,
+                pinned,
+                body
+            };
+        }
+    }, { event: 'task.created' });
+    assert.equal(lookups, 1);
+    assert.equal(seen.address, '93.184.216.34');
+    assert.equal(seen.hostname, 'hooks.example.com');
+    assert.equal(seen.servername, 'hooks.example.com');
+    assert.deepEqual(seen.pinned, { address: '93.184.216.34', family: 4 });
+    assert.equal(seen.body.includes('task.created'), true);
+
+    let literalLookups = 0;
+    await defaultNotify({
+        webhookUrl: 'https://93.184.216.34/hook',
+        lookup: async () => {
+            literalLookups += 1;
+            return [{ address: '10.0.0.1', family: 4 }];
+        },
+        transport: async (options) => {
+            assert.equal(options.address, '93.184.216.34');
+            assert.equal(options.hostname, '93.184.216.34');
+        }
+    }, { event: 'task.created' });
+    assert.equal(literalLookups, 0);
+});
+
 test('webhooks notify the other agent and do not carry tokens', async () => {
     const hits = [];
-    const previous = global.fetch;
-    global.fetch = async (url, init) => {
-        if (String(url).startsWith('https://hooks.example.com/')) {
+    await withServer({
+        notify: defaultNotify,
+        webhookTransport: async (options, body) => {
             hits.push({
-                raw: init.body,
-                signature: init.headers['x-a2a-signature']
+                raw: body,
+                signature: options.headers['x-a2a-signature'],
+                address: options.address
             });
-            return new Response(null, { status: 204 });
         }
-        return previous(url, init);
-    };
-    try {
-        await withServer({ notify: defaultNotify }, async ({ base }) => {
-            const secret = 'hook-secret';
-            await register(base, {
-                ...team(2, { teamName: 'Waiver Wolf' }),
-                webhookUrl: 'https://hooks.example.com/hook',
-                webhookSecret: secret
-            });
-            const proposer = await register(base, team(1, { teamName: 'Gridiron AI' }));
-            await proposer.client.createTask({
-                kind: 'trade',
-                toTeamId: '2',
-                terms: { send: ['Justin Jefferson'], receive: ["Ja'Marr Chase"] }
-            });
-            assert.equal(hits.length, 1);
-            const payload = JSON.parse(hits[0].raw);
-            assert.equal(payload.event, 'task.created');
-            assert.equal(hits[0].raw.includes(proposer.agentToken), false);
-            assert.equal(hits[0].raw.includes(proposer.ownerToken), false);
-            assert.equal(hits[0].raw.includes(secret), false);
-            const expected = crypto.createHmac('sha256', secret).update(hits[0].raw).digest('hex');
-            assert.equal(hits[0].signature, `sha256=${expected}`);
+    }, async ({ base }) => {
+        const secret = 'hook-secret';
+        await register(base, {
+            ...team(2, { teamName: 'Waiver Wolf' }),
+            webhookUrl: 'https://hooks.example.com/hook',
+            webhookSecret: secret
         });
-    } finally {
-        global.fetch = previous;
-    }
+        const proposer = await register(base, team(1, { teamName: 'Gridiron AI' }));
+        await proposer.client.createTask({
+            kind: 'trade',
+            toTeamId: '2',
+            terms: { send: ['Justin Jefferson'], receive: ["Ja'Marr Chase"] }
+        });
+        assert.equal(hits.length, 1);
+        const payload = JSON.parse(hits[0].raw);
+        assert.equal(payload.event, 'task.created');
+        assert.equal(hits[0].address, '93.184.216.34');
+        assert.equal(hits[0].raw.includes(proposer.agentToken), false);
+        assert.equal(hits[0].raw.includes(proposer.ownerToken), false);
+        assert.equal(hits[0].raw.includes(secret), false);
+        const expected = crypto.createHmac('sha256', secret).update(hits[0].raw).digest('hex');
+        assert.equal(hits[0].signature, `sha256=${expected}`);
+    });
 });
 
 test('registration fails closed, checks the roster, and will not hijack an owner', async () => {
@@ -529,38 +601,112 @@ test('webhook secrets stay encrypted across a restart and still sign deliveries'
     const persistPath = path.join(dir, 'store.json');
     const secretKey = crypto.createHash('sha256').update('reload-key').digest();
     const hits = [];
-    const previous = global.fetch;
-    global.fetch = async (url, init) => {
-        if (String(url).startsWith('https://hooks.example.com/')) {
-            hits.push({ raw: init.body, signature: init.headers['x-a2a-signature'] });
-            return new Response(null, { status: 204 });
-        }
-        return previous(url, init);
+    const webhookTransport = async (options, body) => {
+        hits.push({ raw: body, signature: options.headers['x-a2a-signature'] });
     };
-    try {
-        await withServer({ persistPath, secretKey, notify: defaultNotify }, async ({ base }) => {
-            await register(base, {
-                ...team(2),
-                webhookUrl: 'https://hooks.example.com/hook',
-                webhookSecret: 'hook-secret'
-            });
+    await withServer({ persistPath, secretKey, notify: defaultNotify, webhookTransport }, async ({ base }) => {
+        await register(base, {
+            ...team(2),
+            webhookUrl: 'https://hooks.example.com/hook',
+            webhookSecret: 'hook-secret'
         });
-        const stored = fs.readFileSync(persistPath, 'utf8');
-        assert.equal(stored.includes('hook-secret'), false);
-        assert.match(stored, /webhookSecretEnc":"v1:/);
+    });
+    const stored = fs.readFileSync(persistPath, 'utf8');
+    assert.equal(stored.includes('hook-secret'), false);
+    assert.match(stored, /webhookSecretEnc":"v1:/);
 
-        await withServer({ persistPath, secretKey, notify: defaultNotify }, async ({ base }) => {
-            const proposer = await register(base, team(1));
-            await proposer.client.createTask({
-                kind: 'trade',
-                toTeamId: '2',
-                terms: { send: ['Justin Jefferson'], receive: ["Ja'Marr Chase"] }
-            });
+    await withServer({ persistPath, secretKey, notify: defaultNotify, webhookTransport }, async ({ base }) => {
+        const proposer = await register(base, team(1));
+        await proposer.client.createTask({
+            kind: 'trade',
+            toTeamId: '2',
+            terms: { send: ['Justin Jefferson'], receive: ["Ja'Marr Chase"] }
         });
-        assert.equal(hits.length, 1);
-        const expected = crypto.createHmac('sha256', 'hook-secret').update(hits[0].raw).digest('hex');
-        assert.equal(hits[0].signature, `sha256=${expected}`);
-    } finally {
-        global.fetch = previous;
-    }
+    });
+    assert.equal(hits.length, 1);
+    const expected = crypto.createHmac('sha256', 'hook-secret').update(hits[0].raw).digest('hex');
+    assert.equal(hits[0].signature, `sha256=${expected}`);
+});
+
+test('failed league codes lock the caller IP until the lockout expires', async () => {
+    let clock = 1_000_000;
+    await withServer({
+        rateLimit: {
+            register: { windowMs: 10 * 60 * 1000, max: 30, now: () => clock },
+            registerLockout: { maxFailures: 5, lockoutMs: 15 * 60 * 1000, now: () => clock }
+        }
+    }, async ({ base }) => {
+        for (let index = 0; index < 4; index += 1) {
+            await assert.rejects(
+                () => register(base, team(1), { leagueCode: 'nope' }),
+                (error) => error.status === 401
+            );
+        }
+        const createdEarly = await register(base, team(3));
+        assert.equal(createdEarly.agent.metadata.teamId, '3');
+        for (let index = 0; index < 4; index += 1) {
+            await assert.rejects(
+                () => register(base, team(1), { leagueCode: 'nope' }),
+                (error) => error.status === 401
+            );
+        }
+        await assert.rejects(
+            () => register(base, team(1), { leagueCode: 'nope' }),
+            (error) => error.status === 429 && error.code === 'rate_limited'
+        );
+        await assert.rejects(
+            () => register(base, team(1)),
+            (error) => error.status === 429 && error.code === 'rate_limited'
+        );
+        clock += (15 * 60 * 1000) - 1;
+        await assert.rejects(
+            () => register(base, team(1)),
+            (error) => error.status === 429 && error.code === 'rate_limited'
+        );
+        clock += 1;
+        const created = await register(base, team(1));
+        assert.equal(created.agent.metadata.teamId, '1');
+        assert.equal(created.ownerToken.length > 16, true);
+    });
+
+    let tiny = 0;
+    const lockout = createAttemptLockout({ maxFailures: 2, lockoutMs: 1000, now: () => tiny });
+    assert.equal(lockout.recordFailure('ip').locked, false);
+    assert.equal(lockout.recordFailure('ip').locked, true);
+    assert.equal(lockout.check('ip').ok, false);
+    lockout.recordSuccess('ip');
+    assert.equal(lockout.check('ip').ok, true);
+    assert.equal(lockout.size(), 0);
+});
+
+test('claiming an open roster requires the sleeper owner id', async () => {
+    await withServer({
+        rateLimit: { register: { windowMs: 10 * 60 * 1000, max: 30 } }
+    }, async ({ base, desk }) => {
+        await assert.rejects(
+            () => register(base, team(1, { sleeperOwnerId: undefined })),
+            (error) => error.status === 403 && error.code === 'forbidden'
+        );
+        await assert.rejects(
+            () => register(base, team(1, { sleeperOwnerId: 'user-9' })),
+            (error) => error.status === 403
+        );
+        for (let index = 0; index < 4; index += 1) {
+            await assert.rejects(
+                () => register(base, team(1, { sleeperOwnerId: 'user-9' })),
+                (error) => error.status === 403
+            );
+        }
+        const first = await register(base, team(1));
+        assert.equal(first.agent.metadata.teamName, 'Team 1');
+        desk.revokeAgent(first.agent.metadata.agentId, first.ownerToken);
+        await assert.rejects(
+            () => register(base, team(1, { sleeperOwnerId: undefined })),
+            (error) => error.status === 403
+        );
+        const reclaimed = await register(base, team(1, { name: 'Reclaimed' }));
+        assert.equal(reclaimed.ownerToken.length > 16, true);
+        assert.notEqual(reclaimed.ownerToken, first.ownerToken);
+        assert.equal((await reclaimed.owner.me()).agent.name, 'Reclaimed');
+    });
 });

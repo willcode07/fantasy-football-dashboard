@@ -54,6 +54,7 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
     const [agentName, setAgentName] = useState('');
     const [webhookUrl, setWebhookUrl] = useState('');
     const [leagueCode, setLeagueCode] = useState('');
+    const [sleeperUserId, setSleeperUserId] = useState('');
     const [formError, setFormError] = useState('');
     const [fresh, setFresh] = useState(null);
     const [claimToken, setClaimToken] = useState('');
@@ -167,20 +168,24 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
         event.preventDefault();
         setFormError('');
         setFresh(null);
-        if (!teamId.trim() || !teamName.trim() || !agentName.trim()) {
-            setFormError('Roster id, team name, and agent name are required.');
+        const trimmedTeam = teamId.trim();
+        const existing = sessions.find((item) => item.teamId === trimmedTeam && item.leagueId === leagueId);
+        const replacing = Boolean(existing && existing.ownerToken);
+        if (!trimmedTeam || !teamName.trim() || !agentName.trim() || (!replacing && !sleeperUserId.trim())) {
+            setFormError(replacing
+                ? 'Roster id, team name, and agent name are required.'
+                : 'Roster id, team name, agent name, and Sleeper user id are required.');
             return;
         }
         setBusy(true);
         try {
-            const trimmedTeam = teamId.trim();
-            const existing = sessions.find((item) => item.teamId === trimmedTeam && item.leagueId === leagueId);
             const created = await registerAgent({
                 teamId: trimmedTeam,
                 teamName: teamName.trim(),
                 leagueId,
                 name: agentName.trim(),
-                webhookUrl: webhookUrl.trim() || undefined
+                webhookUrl: webhookUrl.trim() || undefined,
+                sleeperOwnerId: sleeperUserId.trim() || undefined
             }, {
                 leagueCode: leagueCode.trim(),
                 token: existing && existing.ownerToken
@@ -335,8 +340,23 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
                             League code
                             <input
                                 id="a2a-league-code"
+                                type="text"
+                                inputMode="text"
                                 value={leagueCode}
                                 onChange={(event) => setLeagueCode(event.target.value)}
+                                placeholder="226"
+                                autoComplete="off"
+                                spellCheck="false"
+                            />
+                        </label>
+                        <label htmlFor="a2a-sleeper-user">
+                            Sleeper user id
+                            <input
+                                id="a2a-sleeper-user"
+                                type="text"
+                                value={sleeperUserId}
+                                onChange={(event) => setSleeperUserId(event.target.value)}
+                                placeholder="Required for a new claim"
                                 autoComplete="off"
                                 spellCheck="false"
                             />

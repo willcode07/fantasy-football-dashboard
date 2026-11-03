@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const test = require('node:test');
-const { assertWebhookUrl, createDesk, validateTerms } = require('./desk');
+const { assertWebhookUrl, createDesk, resolveWebhookTarget, validateTerms } = require('./desk');
 
 const PUBLIC_LOOKUP = async () => [{ address: '93.184.216.34', family: 4 }];
 const SECRET_KEY = Buffer.alloc(32, 7);
@@ -55,7 +55,8 @@ test('persisted desk keeps owner access and does not store raw tokens', async ()
         leagueId: 'lg',
         name: 'Saver',
         webhookUrl: 'https://hooks.example.com/hook',
-        webhookSecret: 'plain-secret'
+        webhookSecret: 'plain-secret',
+        sleeperOwnerId: 'user-9'
     }, { leagueCode: 'desk-code' });
     const reloaded = createDesk({
         persistPath,
@@ -122,6 +123,13 @@ test('webhook URLs reject local, private, and metadata targets', async () => {
     assert.match(allowed, /^https:\/\/93\.184\.216\.34\/hook/);
     const named = await assertWebhookUrl('https://hooks.example.com/hook', PUBLIC_LOOKUP);
     assert.match(named, /^https:\/\/hooks\.example\.com\/hook/);
+    const target = await resolveWebhookTarget('https://hooks.example.com/hook', PUBLIC_LOOKUP);
+    assert.equal(target.address, '93.184.216.34');
+    assert.equal(target.family, 4);
+    assert.match(target.href, /^https:\/\/hooks\.example\.com\/hook/);
+    const literal = await resolveWebhookTarget('https://93.184.216.34/hook');
+    assert.equal(literal.address, '93.184.216.34');
+    assert.equal(literal.family, 4);
 });
 
 test('registration is closed without a league code and ignores a spoofed team name', async () => {
@@ -157,7 +165,8 @@ test('an existing agent is not replaced without that owner token', async () => {
         teamId: '1',
         teamName: 'Attacker',
         leagueId: 'lg',
-        name: 'Original'
+        name: 'Original',
+        sleeperOwnerId: 'user-1'
     }, { leagueCode: 'desk-code' });
     assert.equal(first.agent.metadata.teamName, 'Real Owners');
 
@@ -186,7 +195,8 @@ test('an existing agent is not replaced without that owner token', async () => {
         teamId: '2',
         teamName: 'Other',
         leagueId: 'lg',
-        name: 'Other Agent'
+        name: 'Other Agent',
+        sleeperOwnerId: 'user-2'
     }, { leagueCode: 'desk-code' });
     await assert.rejects(
         () => desk.registerAgent({
@@ -235,7 +245,8 @@ test('sleeper roster lookup fails closed unless the team exists', async () => {
             teamId: '4',
             teamName: 'Spoof',
             leagueId: 'league-verified',
-            name: 'Bench'
+            name: 'Bench',
+            sleeperOwnerId: 'u1'
         }, { leagueCode: 'desk-code' });
         assert.equal(created.agent.metadata.teamName, 'Bench Mob');
         global.fetch = async () => new Response('down', { status: 503 });
@@ -251,6 +262,81 @@ test('sleeper roster lookup fails closed unless the team exists', async () => {
     } finally {
         global.fetch = previous;
     }
+});
+
+test('a new or revoked roster can be claimed only by its sleeper owner', async () => {
+    const desk = createDesk({
+        leagueCode: 'desk-code',
+        secretKey: SECRET_KEY,
+        rosters: {
+            lg: {
+                1: { teamName: 'Real Owners', ownerId: 'user-1' },
+                8: { teamName: 'Orphan', ownerId: null }
+            }
+        },
+        lookup: PUBLIC_LOOKUP
+    });
+    await assert.rejects(
+        () => desk.registerAgent({
+            teamId: '1',
+            leagueId: 'lg',
+            name: 'Missing Owner',
+            sleeperOwnerId: 'user-1'
+        }, { leagueCode: 'wrong-code' }),
+        (error) => error.status === 401 && error.code === 'unauthorized'
+    );
+    await assert.rejects(
+        () => desk.registerAgent({
+            teamId: '1',
+            leagueId: 'lg',
+            name: 'Missing Owner'
+        }, { leagueCode: 'desk-code' }),
+        (error) => error.status === 403 && error.message === 'That Sleeper user does not own this roster.'
+    );
+    await assert.rejects(
+        () => desk.registerAgent({
+            teamId: '1',
+            leagueId: 'lg',
+            name: 'Wrong Owner',
+            sleeperOwnerId: 'user-2'
+        }, { leagueCode: 'desk-code' }),
+        (error) => error.status === 403 && !error.message.includes('user-1')
+    );
+    await assert.rejects(
+        () => desk.registerAgent({
+            teamId: '8',
+            leagueId: 'lg',
+            name: 'Orphan',
+            sleeperOwnerId: 'user-1'
+        }, { leagueCode: 'desk-code' }),
+        (error) => error.status === 403 && error.message.includes('no Sleeper owner')
+    );
+
+    const first = await desk.registerAgent({
+        teamId: '1',
+        leagueId: 'lg',
+        name: 'Original',
+        sleeperOwnerId: 'user-1'
+    }, { leagueCode: 'desk-code' });
+    desk.revokeAgent(first.agent.metadata.agentId, first.ownerToken);
+    await assert.rejects(
+        () => desk.registerAgent({
+            teamId: '1',
+            leagueId: 'lg',
+            name: 'Code Only'
+        }, { leagueCode: 'desk-code' }),
+        (error) => error.status === 403
+    );
+    const reclaimed = await desk.registerAgent({
+        teamId: '1',
+        leagueId: 'lg',
+        name: 'Reclaimed',
+        sleeperOwnerId: 'user-1'
+    }, { leagueCode: 'desk-code' });
+    assert.equal(typeof reclaimed.ownerToken, 'string');
+    assert.notEqual(reclaimed.ownerToken, first.ownerToken);
+    assert.equal(desk.me(reclaimed.ownerToken).role, 'owner');
+    assert.equal(desk.authenticate(first.ownerToken), null);
 });
 
 test('plaintext webhook secrets are encrypted when a store is reloaded', async () => {

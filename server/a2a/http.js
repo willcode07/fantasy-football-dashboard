@@ -2,7 +2,8 @@
 
 const crypto = require('crypto');
 const http = require('http');
-const { DeskError, assertWebhookUrl } = require('./desk');
+const https = require('https');
+const { DeskError, isBlockedIp, resolveWebhookTarget } = require('./desk');
 
 const MAX_BODY = 32 * 1024;
 const DEFAULT_ORIGINS = ['http://127.0.0.1:3000', 'http://localhost:3000'];
@@ -42,6 +43,70 @@ function createRateLimiter({ windowMs, max, now = () => Date.now(), maxKeys = 50
 
     hit.size = () => buckets.size;
     return hit;
+}
+
+function createAttemptLockout({
+    maxFailures = 5,
+    lockoutMs = 15 * 60 * 1000,
+    now = () => Date.now(),
+    maxKeys = 5000
+} = {}) {
+    const states = new Map();
+
+    function remember(key, state) {
+        states.delete(key);
+        states.set(key, state);
+        while (states.size > maxKeys) {
+            const oldest = states.keys().next().value;
+            states.delete(oldest);
+        }
+    }
+
+    function currentState(key) {
+        const state = states.get(key);
+        if (!state) return null;
+        if (state.lockedUntil && state.lockedUntil <= now()) {
+            states.delete(key);
+            return null;
+        }
+        return state;
+    }
+
+    function check(key) {
+        const state = currentState(key);
+        if (!state || !state.lockedUntil || state.lockedUntil <= now()) {
+            return { ok: true };
+        }
+        return {
+            ok: false,
+            retryAfter: Math.max(1, Math.ceil((state.lockedUntil - now()) / 1000))
+        };
+    }
+
+    function recordFailure(key) {
+        const current = now();
+        const state = currentState(key);
+        if (state && state.lockedUntil && state.lockedUntil > current) {
+            return {
+                locked: true,
+                retryAfter: Math.max(1, Math.ceil((state.lockedUntil - current) / 1000))
+            };
+        }
+        const failures = (state ? state.failures : 0) + 1;
+        if (failures >= maxFailures) {
+            const lockedUntil = current + lockoutMs;
+            remember(key, { failures, lockedUntil });
+            return { locked: true, retryAfter: Math.max(1, Math.ceil(lockoutMs / 1000)) };
+        }
+        remember(key, { failures, lockedUntil: 0 });
+        return { locked: false, failures };
+    }
+
+    function recordSuccess(key) {
+        states.delete(key);
+    }
+
+    return { check, recordFailure, recordSuccess, size: () => states.size };
 }
 
 function bearer(req) {
@@ -112,6 +177,7 @@ function createA2AServer({ desk, rateLimit, publicBase, corsOrigins } = {}) {
         authedIp: createRateLimiter(rateLimit?.authedIp || { windowMs: 60 * 1000, max: 120 }),
         publicRead: createRateLimiter(rateLimit?.publicRead || { windowMs: 60 * 1000, max: 120 })
     };
+    const registerLockout = createAttemptLockout(rateLimit?.registerLockout);
 
     return http.createServer(async (req, res) => {
         try {
@@ -212,13 +278,40 @@ function createA2AServer({ desk, rateLimit, publicBase, corsOrigins } = {}) {
 
         if (req.method === 'POST' && path === '/api/a2a/agents') {
             if (!allow(req, res, limits.register, ip)) return;
+            const locked = registerLockout.check(ip);
+            if (!locked.ok) {
+                send(req, res, 429, {
+                    error: {
+                        code: 'rate_limited',
+                        message: 'Too many failed registration attempts. Try again later.'
+                    }
+                }, { 'retry-after': String(locked.retryAfter) });
+                return;
+            }
             const body = await readBody(req);
-            const created = await desk.registerAgent(body, {
-                leagueCode: req.headers['x-league-code'],
-                bearerToken: token,
-                baseUrl
-            });
-            send(req, res, 201, created);
+            try {
+                const created = await desk.registerAgent(body, {
+                    leagueCode: req.headers['x-league-code'],
+                    bearerToken: token,
+                    baseUrl
+                });
+                registerLockout.recordSuccess(ip);
+                send(req, res, 201, created);
+            } catch (error) {
+                if (error instanceof DeskError && error.status === 401) {
+                    const result = registerLockout.recordFailure(ip);
+                    if (result.locked) {
+                        send(req, res, 429, {
+                            error: {
+                                code: 'rate_limited',
+                                message: 'Too many failed registration attempts. Try again later.'
+                            }
+                        }, { 'retry-after': String(result.retryAfter) });
+                        return;
+                    }
+                }
+                throw error;
+            }
             return;
         }
 
@@ -322,32 +415,92 @@ function createA2AServer({ desk, rateLimit, publicBase, corsOrigins } = {}) {
     }
 }
 
+function pinnedLookup(address, family) {
+    const pinnedFamily = family === 6 ? 6 : 4;
+    return function lookupPinned(hostname, options, callback) {
+        const cb = typeof options === 'function' ? options : callback;
+        if (isBlockedIp(address)) {
+            cb(new Error('Webhook address is not allowed.'));
+            return;
+        }
+        if (options && typeof options === 'object' && options.all) {
+            cb(null, [{ address, family: pinnedFamily }]);
+            return;
+        }
+        cb(null, address, pinnedFamily);
+    };
+}
+
+function requestPinned(target, body, headers) {
+    return new Promise((resolve, reject) => {
+        let parsed;
+        try {
+            parsed = new URL(target.href);
+        } catch (error) {
+            reject(error);
+            return;
+        }
+        const lib = parsed.protocol === 'https:' ? https : http;
+        const family = Number(target.family) === 6 ? 6 : 4;
+        const req = lib.request({
+            protocol: parsed.protocol,
+            hostname: parsed.hostname,
+            port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+            path: `${parsed.pathname}${parsed.search}`,
+            method: 'POST',
+            headers,
+            servername: parsed.hostname,
+            lookup: pinnedLookup(target.address, family),
+            timeout: 2000
+        }, (res) => {
+            res.resume();
+            if (res.statusCode < 200 || res.statusCode >= 300) {
+                reject(new Error(`Webhook responded ${res.statusCode}`));
+                return;
+            }
+            resolve();
+        });
+        req.on('timeout', () => {
+            req.destroy(new Error('Webhook timed out.'));
+        });
+        req.on('error', reject);
+        req.end(body);
+    });
+}
+
 async function defaultNotify(target, event) {
-    const url = await assertWebhookUrl(target && target.webhookUrl, target && target.lookup);
-    if (!url) throw new Error('Webhook URL is missing.');
+    const resolved = await resolveWebhookTarget(target && target.webhookUrl, target && target.lookup);
+    if (!resolved) throw new Error('Webhook URL is missing.');
     const body = JSON.stringify(event);
     const headers = {
         'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body),
         'user-agent': 'fantasy-a2a/0.1'
     };
     if (target.webhookSecret) {
         const digest = crypto.createHmac('sha256', target.webhookSecret).update(body).digest('hex');
         headers['x-a2a-signature'] = `sha256=${digest}`;
     }
-    const response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body,
-        redirect: 'error',
-        signal: AbortSignal.timeout(2000)
-    });
-    if (!response.ok) {
-        throw new Error(`Webhook responded ${response.status}`);
+    const family = Number(resolved.family) === 6 ? 6 : 4;
+    const hostname = new URL(resolved.href).hostname;
+    if (typeof target.transport === 'function') {
+        await target.transport({
+            href: resolved.href,
+            address: resolved.address,
+            family,
+            hostname,
+            servername: hostname,
+            headers,
+            lookup: pinnedLookup(resolved.address, family)
+        }, body);
+        return;
     }
+    await requestPinned(resolved, body, headers);
 }
 
 module.exports = {
     createA2AServer,
+    createAttemptLockout,
     createRateLimiter,
     defaultNotify
 };

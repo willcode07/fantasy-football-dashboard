@@ -78,6 +78,34 @@ function resolveSecretKey(env = process.env, keyPath) {
     return key;
 }
 
+function loadEnvFile(filePath, env = process.env) {
+    let text;
+    try {
+        text = fs.readFileSync(filePath, 'utf8');
+    } catch (error) {
+        if (error.code === 'ENOENT') return env;
+        throw error;
+    }
+    text.split(/\r?\n/).forEach((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) return;
+        const eq = trimmed.indexOf('=');
+        if (eq <= 0) return;
+        const key = trimmed.slice(0, eq).trim();
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) return;
+        if (env[key] != null && env[key] !== '') return;
+        let value = trimmed.slice(eq + 1).trim();
+        if (
+            (value.startsWith('"') && value.endsWith('"') && value.length >= 2)
+            || (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
+        ) {
+            value = value.slice(1, -1);
+        }
+        env[key] = value;
+    });
+    return env;
+}
+
 function resolveCorsOrigins(env = process.env) {
     const raw = env.A2A_CORS_ORIGIN;
     if (raw == null || String(raw).trim() === '') {
@@ -87,6 +115,7 @@ function resolveCorsOrigins(env = process.env) {
 }
 
 module.exports = {
+    loadEnvFile,
     resolveCorsOrigins,
     resolveLeagueCode,
     resolveListenHost,

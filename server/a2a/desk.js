@@ -148,7 +148,7 @@ function classifyHost(hostname) {
     return { name };
 }
 
-async function assertWebhookUrl(value, lookup = dns.promises.lookup) {
+async function resolveWebhookTarget(value, lookup = dns.promises.lookup) {
     if (value == null || value === '') return null;
     if (typeof value !== 'string' || value.length > 300) {
         throw new DeskError('validation', 'webhookUrl must be an http(s) URL.', 400);
@@ -169,7 +169,13 @@ async function assertWebhookUrl(value, lookup = dns.promises.lookup) {
     if (classified.blocked || (classified.ip && isBlockedIp(classified.ip))) {
         throw new DeskError('validation', 'webhookUrl is not allowed.', 400);
     }
-    if (classified.ip) return parsed.toString();
+    if (classified.ip) {
+        return {
+            href: parsed.toString(),
+            address: classified.ip,
+            family: net.isIP(classified.ip)
+        };
+    }
     let records;
     try {
         records = await lookup(classified.name, { all: true });
@@ -181,7 +187,19 @@ async function assertWebhookUrl(value, lookup = dns.promises.lookup) {
     if (addresses.length === 0 || addresses.some((address) => isBlockedIp(address))) {
         throw new DeskError('validation', 'webhookUrl is not allowed.', 400);
     }
-    return parsed.toString();
+    const chosen = addresses[0];
+    const record = list[0];
+    const family = (record && typeof record === 'object' && record.family) || net.isIP(chosen);
+    return {
+        href: parsed.toString(),
+        address: chosen,
+        family: Number(family) === 6 ? 6 : 4
+    };
+}
+
+async function assertWebhookUrl(value, lookup = dns.promises.lookup) {
+    const target = await resolveWebhookTarget(value, lookup);
+    return target ? target.href : null;
 }
 
 function encryptSecret(plain, key) {
@@ -261,6 +279,16 @@ function validateTerms(kind, terms) {
         return { player, amount, dropClaim: Boolean(terms.dropClaim) };
     }
     throw new DeskError('validation', 'kind must be trade, waiver_priority, or faab.', 400);
+}
+
+function assertRosterOwner(roster, provided) {
+    if (!roster || roster.ownerId == null || String(roster.ownerId).trim() === '') {
+        throw new DeskError('forbidden', 'This roster has no Sleeper owner, so it cannot be claimed.', 403);
+    }
+    const given = provided == null ? '' : String(provided).trim();
+    if (!safeEqualHex(hashToken(given), hashToken(String(roster.ownerId)))) {
+        throw new DeskError('forbidden', 'That Sleeper user does not own this roster.', 403);
+    }
 }
 
 function integerIn(value, min, max, field) {
@@ -581,7 +609,8 @@ function createDesk(options = {}) {
                 await notify({
                     webhookUrl: agent.webhookUrl,
                     webhookSecret,
-                    lookup
+                    lookup,
+                    transport: options.webhookTransport
                 }, event);
                 agent.lastWebhookError = null;
             } catch (error) {
@@ -682,6 +711,7 @@ function createDesk(options = {}) {
             }
 
             assertLeagueCode(meta.leagueCode);
+            assertRosterOwner(roster, body.sleeperOwnerId);
             const webhookUrl = await assertWebhookUrl(body.webhookUrl, lookup);
             const webhookSecret = webhookSecretFrom(body);
             const agentToken = createToken();
@@ -1064,5 +1094,7 @@ module.exports = {
     assertWebhookUrl,
     createDesk,
     hashToken,
+    isBlockedIp,
+    resolveWebhookTarget,
     validateTerms
 };

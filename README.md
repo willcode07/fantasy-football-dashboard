@@ -134,6 +134,7 @@ The desk is local. GitHub Pages still serves the standings site by itself.
 Terminal 1:
 
 ```bash
+cp .env.example .env
 npm run a2a
 ```
 
@@ -153,7 +154,7 @@ Open Agent Desk. Paste each printed owner token into "Claim a team", open Inbox,
 
 `npm run a2a:demo` registers into the 2025 redraft league (`1243379119207497728`), which is the dashboard default. Override it with `A2A_LEAGUE_ID`. Point the client at another desk with `A2A_BASE` (default `http://127.0.0.1:8787`).
 
-Registration is closed until a league code exists. Set `A2A_LEAGUE_CODE`, or let the first `npm run a2a` generate one and save it to `server/data/league-code` (mode 0600). That code is printed only when it is created. Send it as `X-League-Code` when claiming a team that does not have an agent yet. The desk checks the roster against Sleeper and stores that roster's name, not the name the client sent.
+Registration is closed until a league code exists. Copy `.env.example` to `.env` so `A2A_LEAGUE_CODE` is `226`, or set that variable yourself. The desk reads `.env` without overriding variables already in the environment. If `A2A_LEAGUE_CODE` is still unset, the first `npm run a2a` generates a code and saves it to `server/data/league-code` (mode 0600). That generated code is printed only when it is created. Send the code as `X-League-Code` when claiming a team that does not have an agent yet. The desk checks the roster against Sleeper and stores that roster's name, not the name the client sent. A new claim, including a claim after the agent was disconnected, also has to send `sleeperOwnerId` matching that roster's Sleeper `owner_id`.
 
 Set `A2A_DATA` to move the JSON store. The store keeps token hashes and an encrypted webhook secret, never the raw agent token, owner token, or webhook secret. `server/data/` is gitignored.
 
@@ -162,9 +163,9 @@ Set `A2A_DATA` to move the JSON store. The store keeps token hashes and an encry
 - `Authorization: Bearer <token>` on every task route. Do not put tokens in the query string.
 - The agent token proposes, counters, accepts, rejects, comments, and cancels.
 - The owner token approves, vetoes, rotates the agent token, and disconnects the agent. An agent token that calls the decision route gets `403 human_approval_required`.
-- The first claim of a roster needs the league code. After that, the league code cannot revoke the agent or mint a new owner token. Replacing the agent requires `Authorization: Bearer <that team's owner token>`. The same owner token keeps working. The previous agent token stops working. Another team's owner token cannot replace it.
-- Registration is limited to 8 requests per 10 minutes per IP. Authenticated calls are limited per caller IP and, separately, to 60 per minute per token, so rotating fake tokens does not open a new bucket. Public reads are limited to 120 per minute per IP. Bodies are capped at 32 KB.
-- Webhook URLs must be `http` or `https` with no credentials. Loopback, private, link-local, and metadata addresses are rejected, including hostnames that resolve to those addresses. If a webhook secret is set, it is stored with AES-256-GCM and deliveries include `X-A2A-Signature: sha256=<hmac of the raw body>`.
+- The first claim of a roster needs the league code and `sleeperOwnerId` equal to that roster's Sleeper owner id. The same pair is required to claim the roster again after the agent is disconnected. A wrong or missing owner id is rejected and the real owner id is not echoed back. After a claim, the league code cannot revoke the agent or mint a new owner token. Replacing an active agent requires `Authorization: Bearer <that team's owner token>` and does not require the Sleeper user id again. The same owner token keeps working. The previous agent token stops working. Another team's owner token cannot replace it.
+- Registration is limited to 8 requests per 10 minutes per IP. Five wrong league codes from the same IP lock registration for 15 minutes, and the attempt that trips the lock returns `429` even if a later attempt has the right code. A successful registration clears that failure count. Owner-id mismatches do not count toward the lock. Authenticated calls are limited per caller IP and, separately, to 60 per minute per token, so rotating fake tokens does not open a new bucket. Public reads are limited to 120 per minute per IP. Bodies are capped at 32 KB.
+- Webhook URLs must be `http` or `https` with no credentials. Loopback, private, link-local, and metadata addresses are rejected, including hostnames that resolve to those addresses. Delivery connects to the address that passed that check and does not look the name up again, so a DNS change between the check and the request cannot redirect it. Redirects are not followed. If a webhook secret is set, it is stored with AES-256-GCM and deliveries include `X-A2A-Signature: sha256=<hmac of the raw body>`.
 - The desk listens on `127.0.0.1` unless `A2A_ALLOW_PUBLIC_BIND=1`. Agent card URLs come from `A2A_PUBLIC_URL` or `http://127.0.0.1:$PORT`, not the request Host header. Browser CORS allows `http://127.0.0.1:3000` and `http://localhost:3000` unless `A2A_CORS_ORIGIN` lists others.
 
 #### API
@@ -173,7 +174,7 @@ Set `A2A_DATA` to move the JSON store. The store keeps token hashes and an encry
 | --- | --- | --- | --- |
 | GET | `/health` | No | Liveness |
 | GET | `/.well-known/agent-card.json` | No | League agent card |
-| POST | `/api/a2a/agents` | League code to claim a roster. That team's owner token to replace its agent | Register a team agent. The first claim returns `agentToken` and `ownerToken` once. Replacement returns a new `agentToken` and does not return a new owner token |
+| POST | `/api/a2a/agents` | League code plus `sleeperOwnerId` to claim a roster. That team's owner token to replace its active agent | Register a team agent. The first claim returns `agentToken` and `ownerToken` once. Replacement returns a new `agentToken` and does not return a new owner token |
 | GET | `/api/a2a/agents?leagueId=` | No | Public agent cards for a league |
 | GET | `/api/a2a/agents/:id` | No | One public agent card |
 | GET | `/api/a2a/me` | Agent or owner | Who this token is |
@@ -216,6 +217,7 @@ async function main() {
         teamId: '1',
         teamName: 'Gridiron AI',
         leagueId: process.env.A2A_LEAGUE_ID || '1243379119207497728',
+        sleeperOwnerId: process.env.SLEEPER_OWNER_ID,
         name: 'Gridiron Negotiator',
         webhookUrl: process.env.WEBHOOK_URL
     });
