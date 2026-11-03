@@ -21,3 +21,7 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Local negotiation desk. Token hashes and webhook secrets stay on this machine.
+server/data/*.json
+examples/.demo-session.json

@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './FantasyDashboard.css';
+import AgentDesk from './AgentDesk';
 
 // Stable league IDs mapping for each season and league type
 const LEAGUE_IDS = {
@@ -54,6 +55,7 @@ function FantasyDashboard() {
     // Add refresh state for smooth updates
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [refreshTrigger, setRefreshTrigger] = useState(0);
+    const [deskView, setDeskView] = useState('standings');
 
     // Get current week by checking actual API data - more reliable than hardcoded dates
     const getCurrentWeekNumber = async () => {
@@ -697,6 +699,25 @@ function FantasyDashboard() {
         <div className={`fantasy-dashboard-wrapper ${isDarkMode ? 'dark-mode' : ''}`}>
             <div className="fantasy-dashboard">
                 <h1>Fantasy Football MNPS Dashboard</h1>
+
+                <div className="league-type-selector view-switcher">
+                    <div className="league-toggle" role="group" aria-label="View">
+                        <button
+                            type="button"
+                            className={deskView === 'standings' ? 'active' : ''}
+                            onClick={() => setDeskView('standings')}
+                        >
+                            Standings
+                        </button>
+                        <button
+                            type="button"
+                            className={deskView === 'agents' ? 'active' : ''}
+                            onClick={() => setDeskView('agents')}
+                        >
+                            Agent Desk
+                        </button>
+                    </div>
+                </div>
                 
                 <div className="league-type-selector">
                     <label>
@@ -725,7 +746,11 @@ function FantasyDashboard() {
                         </div>
                     </label>
                 </div>
-                
+
+                {deskView === 'agents' ? (
+                    <AgentDesk leagueId={leagueId} leagueType={leagueType} teamNames={teamNames} />
+                ) : (
+                <>
                 <div className="season-selector">
                     <label>
                         Select Season:
@@ -1052,6 +1077,8 @@ function FantasyDashboard() {
                             </div>
                         </div>
                     </>
+                )}
+                </>
                 )}
             </div>
         </div>

@@ -12,14 +12,20 @@ jest.mock('axios', () => ({
   delete: jest.fn(() => Promise.resolve({ data: {} })),
 }));
 
-// Mock localStorage
+// jsdom's localStorage is not always replaceable by assignment, and the
+// dashboard tests stub getItem directly. Install a configurable mock.
 const localStorageMock = {
   getItem: jest.fn(),
   setItem: jest.fn(),
   removeItem: jest.fn(),
   clear: jest.fn(),
 };
-global.localStorage = localStorageMock;
+Object.defineProperty(window, 'localStorage', {
+  configurable: true,
+  writable: true,
+  value: localStorageMock,
+});
+global.localStorageMock = localStorageMock;
 
 // Mock console methods to reduce noise in tests
 global.console = {
