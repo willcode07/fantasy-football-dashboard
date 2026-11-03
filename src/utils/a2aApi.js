@@ -83,16 +83,46 @@ export function revokeAgent(agentId, token) {
     }));
 }
 
+export function listClaims({ commissionerCode, status } = {}) {
+    return unwrap(axios.get(`${a2aBase()}/api/a2a/claims`, {
+        params: status ? { status } : undefined,
+        headers: commissionerCode ? { 'X-Commissioner-Code': commissionerCode } : {},
+        timeout: 8000
+    }));
+}
+
+export function decideClaim(claimId, decision, commissionerCode) {
+    return unwrap(axios.post(`${a2aBase()}/api/a2a/claims/${claimId}/decision`, { decision }, {
+        headers: { 'X-Commissioner-Code': commissionerCode },
+        timeout: 8000
+    }));
+}
+
+export function redeemClaim(claimId, claimToken) {
+    return unwrap(axios.get(`${a2aBase()}/api/a2a/claims/${claimId}`, {
+        headers: authHeaders(claimToken),
+        timeout: 8000
+    }));
+}
+
+function withoutOwnerToken(session) {
+    if (!session || typeof session !== 'object') return session;
+    const copy = { ...session };
+    delete copy.ownerToken;
+    return copy;
+}
+
 export function loadSessions() {
     try {
         const raw = localStorage.getItem(SESSION_KEY);
         const parsed = raw ? JSON.parse(raw) : [];
-        return Array.isArray(parsed) ? parsed : [];
+        return Array.isArray(parsed) ? parsed.map(withoutOwnerToken) : [];
     } catch (error) {
         return [];
     }
 }
 
 export function saveSessions(sessions) {
-    localStorage.setItem(SESSION_KEY, JSON.stringify(sessions));
+    const safe = (Array.isArray(sessions) ? sessions : []).map(withoutOwnerToken);
+    localStorage.setItem(SESSION_KEY, JSON.stringify(safe));
 }

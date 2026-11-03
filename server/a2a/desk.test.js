@@ -9,6 +9,25 @@ const { assertWebhookUrl, createDesk, resolveWebhookTarget, validateTerms } = re
 
 const PUBLIC_LOOKUP = async () => [{ address: '93.184.216.34', family: 4 }];
 const SECRET_KEY = Buffer.alloc(32, 7);
+const LEAGUE_CODE = 'desk-code';
+const COMMISSIONER_CODE = 'desk-commissioner';
+
+function openDesk(extra = {}) {
+    return createDesk({
+        leagueCode: LEAGUE_CODE,
+        commissionerCode: COMMISSIONER_CODE,
+        secretKey: SECRET_KEY,
+        lookup: PUBLIC_LOOKUP,
+        ...extra
+    });
+}
+
+async function issue(desk, body, meta = {}) {
+    const pending = await desk.registerAgent(body, { leagueCode: LEAGUE_CODE, ...meta });
+    if (pending.status !== 'pending') return pending;
+    desk.decideClaim(pending.claim.id, { commissionerCode: COMMISSIONER_CODE, decision: 'approve' });
+    return desk.redeemClaim(pending.claim.id, pending.claimToken);
+}
 
 test('trade terms reject a player on both sides', () => {
     assert.throws(
@@ -43,25 +62,20 @@ test('faab amount is a whole number of dollars', () => {
 test('persisted desk keeps owner access and does not store raw tokens', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'a2a-desk-'));
     const persistPath = path.join(dir, 'store.json');
-    const created = await createDesk({
+    const desk = openDesk({
         persistPath,
-        leagueCode: 'desk-code',
-        secretKey: SECRET_KEY,
-        rosters: { lg: { 9: { teamName: 'Saved Team', ownerId: 'user-9' } } },
-        lookup: PUBLIC_LOOKUP
-    }).registerAgent({
+        rosters: { lg: { 9: { teamName: 'Saved Team', ownerId: 'user-9' } } }
+    });
+    const created = await issue(desk, {
         teamId: '9',
         teamName: 'Spoofed',
         leagueId: 'lg',
         name: 'Saver',
         webhookUrl: 'https://hooks.example.com/hook',
-        webhookSecret: 'plain-secret',
-        sleeperOwnerId: 'user-9'
-    }, { leagueCode: 'desk-code' });
-    const reloaded = createDesk({
+        webhookSecret: 'plain-secret'
+    });
+    const reloaded = openDesk({
         persistPath,
-        leagueCode: 'desk-code',
-        secretKey: SECRET_KEY,
         rosters: { lg: { 9: { teamName: 'Saved Team', ownerId: 'user-9' } } }
     });
     const me = reloaded.me(created.ownerToken);
@@ -150,24 +164,20 @@ test('registration is closed without a league code and ignores a spoofed team na
 });
 
 test('an existing agent is not replaced without that owner token', async () => {
-    const desk = createDesk({
-        leagueCode: 'desk-code',
-        secretKey: SECRET_KEY,
+    const desk = openDesk({
         rosters: {
             lg: {
                 1: { teamName: 'Real Owners', ownerId: 'user-1' },
                 2: { teamName: 'Other Team', ownerId: 'user-2' }
             }
-        },
-        lookup: PUBLIC_LOOKUP
+        }
     });
-    const first = await desk.registerAgent({
+    const first = await issue(desk, {
         teamId: '1',
         teamName: 'Attacker',
         leagueId: 'lg',
-        name: 'Original',
-        sleeperOwnerId: 'user-1'
-    }, { leagueCode: 'desk-code' });
+        name: 'Original'
+    });
     assert.equal(first.agent.metadata.teamName, 'Real Owners');
 
     await assert.rejects(
@@ -176,28 +186,26 @@ test('an existing agent is not replaced without that owner token', async () => {
             teamName: 'Missing',
             leagueId: 'lg',
             name: 'Nobody'
-        }, { leagueCode: 'desk-code' }),
+        }, { leagueCode: LEAGUE_CODE }),
         (error) => error.status === 404
     );
-    await assert.rejects(
-        () => desk.registerAgent({
-            teamId: '1',
-            teamName: 'Hijack',
-            leagueId: 'lg',
-            name: 'Hijack'
-        }, { leagueCode: 'desk-code' }),
-        (error) => error.status === 403
-    );
+    const recovery = await desk.registerAgent({
+        teamId: '1',
+        teamName: 'Hijack',
+        leagueId: 'lg',
+        name: 'Hijack'
+    }, { leagueCode: LEAGUE_CODE });
+    assert.equal(recovery.status, 'pending');
+    assert.equal(recovery.claim.purpose, 'rotate-owner');
     assert.equal(desk.me(first.ownerToken).role, 'owner');
-    assert.equal(desk.me(first.agentToken).role, 'agent');
+    assert.equal(desk.me(first.agentToken).agent.name, 'Original');
 
-    const other = await desk.registerAgent({
+    const other = await issue(desk, {
         teamId: '2',
         teamName: 'Other',
         leagueId: 'lg',
-        name: 'Other Agent',
-        sleeperOwnerId: 'user-2'
-    }, { leagueCode: 'desk-code' });
+        name: 'Other Agent'
+    });
     await assert.rejects(
         () => desk.registerAgent({
             teamId: '1',
@@ -236,18 +244,19 @@ test('sleeper roster lookup fails closed unless the team exists', async () => {
         return new Response('no', { status: 500 });
     };
     try {
-        const desk = createDesk({
-            leagueCode: 'desk-code',
-            secretKey: SECRET_KEY,
-            lookup: PUBLIC_LOOKUP
-        });
-        const created = await desk.registerAgent({
+        const desk = openDesk();
+        const pending = await desk.registerAgent({
             teamId: '4',
             teamName: 'Spoof',
             leagueId: 'league-verified',
             name: 'Bench',
-            sleeperOwnerId: 'u1'
-        }, { leagueCode: 'desk-code' });
+            sleeperOwnerId: 'someone-else'
+        }, { leagueCode: LEAGUE_CODE });
+        assert.equal(pending.status, 'pending');
+        assert.equal(pending.claim.teamName, 'Bench Mob');
+        assert.equal(Object.prototype.hasOwnProperty.call(pending.claim, 'rosterOwnerId'), false);
+        desk.decideClaim(pending.claim.id, { commissionerCode: COMMISSIONER_CODE, decision: 'approve' });
+        const created = desk.redeemClaim(pending.claim.id, pending.claimToken);
         assert.equal(created.agent.metadata.teamName, 'Bench Mob');
         global.fetch = async () => new Response('down', { status: 503 });
         await assert.rejects(
@@ -256,7 +265,7 @@ test('sleeper roster lookup fails closed unless the team exists', async () => {
                 teamName: 'X',
                 leagueId: 'league-offline',
                 name: 'X'
-            }, { leagueCode: 'desk-code' }),
+            }, { leagueCode: LEAGUE_CODE }),
             (error) => error.status === 404 && error.code === 'not_found'
         );
     } finally {
@@ -264,17 +273,14 @@ test('sleeper roster lookup fails closed unless the team exists', async () => {
     }
 });
 
-test('a new or revoked roster can be claimed only by its sleeper owner', async () => {
-    const desk = createDesk({
-        leagueCode: 'desk-code',
-        secretKey: SECRET_KEY,
+test('a roster claim and owner-token recovery wait for the commissioner', async () => {
+    const desk = openDesk({
         rosters: {
             lg: {
                 1: { teamName: 'Real Owners', ownerId: 'user-1' },
                 8: { teamName: 'Orphan', ownerId: null }
             }
-        },
-        lookup: PUBLIC_LOOKUP
+        }
     });
     await assert.rejects(
         () => desk.registerAgent({
@@ -285,58 +291,90 @@ test('a new or revoked roster can be claimed only by its sleeper owner', async (
         }, { leagueCode: 'wrong-code' }),
         (error) => error.status === 401 && error.code === 'unauthorized'
     );
+    assert.equal(desk.listClaims({ commissionerCode: COMMISSIONER_CODE }).claims.length, 0);
+
+    const filed = await desk.registerAgent({
+        teamId: '1',
+        leagueId: 'lg',
+        name: 'Public Id',
+        sleeperOwnerId: 'user-2'
+    }, { leagueCode: LEAGUE_CODE });
+    assert.equal(filed.status, 'pending');
+    assert.equal(filed.ownerToken, undefined);
+    assert.equal(Object.prototype.hasOwnProperty.call(filed.claim, 'rosterOwnerId'), false);
+    assert.equal(desk.listClaims({ commissionerCode: COMMISSIONER_CODE, status: 'pending' }).claims[0].rosterOwnerId, 'user-1');
     await assert.rejects(
         () => desk.registerAgent({
             teamId: '1',
             leagueId: 'lg',
-            name: 'Missing Owner'
-        }, { leagueCode: 'desk-code' }),
-        (error) => error.status === 403 && error.message === 'That Sleeper user does not own this roster.'
+            name: 'Again'
+        }, { leagueCode: LEAGUE_CODE }),
+        (error) => error.status === 409
     );
-    await assert.rejects(
-        () => desk.registerAgent({
-            teamId: '1',
-            leagueId: 'lg',
-            name: 'Wrong Owner',
-            sleeperOwnerId: 'user-2'
-        }, { leagueCode: 'desk-code' }),
-        (error) => error.status === 403 && !error.message.includes('user-1')
+    assert.throws(
+        () => desk.decideClaim(filed.claim.id, { commissionerCode: LEAGUE_CODE, decision: 'approve' }),
+        (error) => error.status === 401
     );
-    await assert.rejects(
-        () => desk.registerAgent({
-            teamId: '8',
-            leagueId: 'lg',
-            name: 'Orphan',
-            sleeperOwnerId: 'user-1'
-        }, { leagueCode: 'desk-code' }),
-        (error) => error.status === 403 && error.message.includes('no Sleeper owner')
+    assert.equal(desk.listAgents().agents.length, 0);
+    const approved = desk.decideClaim(filed.claim.id, { commissionerCode: COMMISSIONER_CODE, decision: 'approve' });
+    assert.equal(approved.claim.status, 'approved');
+    assert.equal(approved.ownerToken, undefined);
+    assert.equal(approved.agentToken, undefined);
+    const first = desk.redeemClaim(filed.claim.id, filed.claimToken);
+    assert.equal(typeof first.ownerToken, 'string');
+    assert.equal(first.agent.metadata.teamName, 'Real Owners');
+    assert.throws(
+        () => desk.redeemClaim(filed.claim.id, filed.claimToken),
+        (error) => error.status === 410
     );
 
-    const first = await desk.registerAgent({
-        teamId: '1',
+    const orphan = await desk.registerAgent({
+        teamId: '8',
         leagueId: 'lg',
-        name: 'Original',
-        sleeperOwnerId: 'user-1'
-    }, { leagueCode: 'desk-code' });
+        name: 'Orphan'
+    }, { leagueCode: LEAGUE_CODE });
+    assert.equal(orphan.status, 'pending');
+    assert.equal(desk.listClaims({ commissionerCode: COMMISSIONER_CODE, status: 'pending' }).claims[0].rosterOwnerId, null);
+
     desk.revokeAgent(first.agent.metadata.agentId, first.ownerToken);
-    await assert.rejects(
-        () => desk.registerAgent({
-            teamId: '1',
-            leagueId: 'lg',
-            name: 'Code Only'
-        }, { leagueCode: 'desk-code' }),
-        (error) => error.status === 403
-    );
-    const reclaimed = await desk.registerAgent({
+    const codeOnly = await desk.registerAgent({
         teamId: '1',
         leagueId: 'lg',
-        name: 'Reclaimed',
-        sleeperOwnerId: 'user-1'
-    }, { leagueCode: 'desk-code' });
-    assert.equal(typeof reclaimed.ownerToken, 'string');
-    assert.notEqual(reclaimed.ownerToken, first.ownerToken);
-    assert.equal(desk.me(reclaimed.ownerToken).role, 'owner');
+        name: 'Code Only'
+    }, { leagueCode: LEAGUE_CODE });
+    assert.equal(codeOnly.status, 'pending');
     assert.equal(desk.authenticate(first.ownerToken), null);
+    const reclaimed = desk.redeemClaim(
+        codeOnly.claim.id,
+        codeOnly.claimToken
+    );
+    assert.equal(reclaimed.status, 'pending');
+    desk.decideClaim(codeOnly.claim.id, { commissionerCode: COMMISSIONER_CODE, decision: 'approve' });
+    const recovered = desk.redeemClaim(codeOnly.claim.id, codeOnly.claimToken);
+    assert.notEqual(recovered.ownerToken, first.ownerToken);
+    assert.equal(desk.me(recovered.ownerToken).role, 'owner');
+
+    const rotation = await desk.registerAgent({
+        teamId: '1',
+        leagueId: 'lg',
+        name: 'Recover',
+        purpose: 'rotate-owner'
+    }, { leagueCode: LEAGUE_CODE });
+    assert.equal(rotation.claim.purpose, 'rotate-owner');
+    assert.equal(desk.me(recovered.ownerToken).role, 'owner');
+    desk.decideClaim(rotation.claim.id, { commissionerCode: COMMISSIONER_CODE, decision: 'approve' });
+    const rotated = desk.redeemClaim(rotation.claim.id, rotation.claimToken);
+    assert.equal(rotated.agentToken, null);
+    assert.equal(desk.authenticate(recovered.ownerToken), null);
+    assert.equal(desk.me(rotated.ownerToken).role, 'owner');
+    assert.equal(desk.me(recovered.agentToken).role, 'agent');
+});
+
+test('the commissioner code cannot match the league code', () => {
+    assert.throws(
+        () => createDesk({ leagueCode: 'same-code', commissionerCode: 'same-code' }),
+        /different from A2A_LEAGUE_CODE/
+    );
 });
 
 test('plaintext webhook secrets are encrypted when a store is reloaded', async () => {

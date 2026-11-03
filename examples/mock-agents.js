@@ -6,50 +6,57 @@ const { A2AClient } = require('./a2a-client');
 
 const DEFAULT_LEAGUE_ID = '1377319553851228160';
 
-// Two agents negotiate one trade, then stop. Approval is left for the human owners.
-async function sleeperOwnerId(leagueId, teamId) {
-    const response = await fetch(`https://api.sleeper.app/v1/league/${encodeURIComponent(leagueId)}/rosters`, {
-        signal: AbortSignal.timeout(5000)
+async function connectTeam({ baseUrl, leagueCode, commissionerCode, body }) {
+    const pending = await A2AClient.register({ baseUrl, leagueCode, ...body });
+    if (pending.status !== 'pending') return pending;
+    await A2AClient.decideClaim({
+        baseUrl,
+        claimId: pending.claim.id,
+        decision: 'approve',
+        commissionerCode
     });
-    if (!response.ok) {
-        throw new Error('Could not read Sleeper rosters to find the owner id.');
-    }
-    const rosters = await response.json();
-    const roster = Array.isArray(rosters)
-        ? rosters.find((item) => String(item.roster_id) === String(teamId))
-        : null;
-    if (!roster || !roster.owner_id) {
-        throw new Error(`Sleeper roster ${teamId} has no owner id.`);
-    }
-    return String(roster.owner_id);
+    const redeemed = await A2AClient.redeemClaim({
+        baseUrl,
+        claimId: pending.claim.id,
+        claimToken: pending.claimToken
+    });
+    return {
+        agent: redeemed.agent,
+        agentToken: redeemed.agentToken,
+        ownerToken: redeemed.ownerToken,
+        client: new A2AClient({ baseUrl, token: redeemed.agentToken }),
+        owner: redeemed.ownerToken ? new A2AClient({ baseUrl, token: redeemed.ownerToken }) : null
+    };
 }
 
-async function runDemo({ baseUrl, leagueId = DEFAULT_LEAGUE_ID, leagueCode, sleeperOwnerIds } = {}) {
+// Two agents negotiate one trade, then stop. Approval is left for the human owners.
+async function runDemo({ baseUrl, leagueId = DEFAULT_LEAGUE_ID, leagueCode, commissionerCode } = {}) {
     if (!baseUrl) throw new Error('baseUrl is required');
-    const ownerIds = sleeperOwnerIds || {
-        1: await sleeperOwnerId(leagueId, '1'),
-        2: await sleeperOwnerId(leagueId, '2')
-    };
+    if (!commissionerCode) throw new Error('commissionerCode is required');
 
-    const gridiron = await A2AClient.register({
+    const gridiron = await connectTeam({
         baseUrl,
         leagueCode,
-        teamId: '1',
-        teamName: 'Gridiron AI',
-        leagueId,
-        name: 'Gridiron Negotiator',
-        description: 'Mocks an owner agent that shops wide receivers.',
-        sleeperOwnerId: ownerIds[1] || ownerIds['1']
+        commissionerCode,
+        body: {
+            teamId: '1',
+            teamName: 'Gridiron AI',
+            leagueId,
+            name: 'Gridiron Negotiator',
+            description: 'Mocks an owner agent that shops wide receivers.'
+        }
     });
-    const wolf = await A2AClient.register({
+    const wolf = await connectTeam({
         baseUrl,
         leagueCode,
-        teamId: '2',
-        teamName: 'Waiver Wolf',
-        leagueId,
-        name: 'Waiver Wolf',
-        description: 'Mocks an owner agent that answers trade offers.',
-        sleeperOwnerId: ownerIds[2] || ownerIds['2']
+        commissionerCode,
+        body: {
+            teamId: '2',
+            teamName: 'Waiver Wolf',
+            leagueId,
+            name: 'Waiver Wolf',
+            description: 'Mocks an owner agent that answers trade offers.'
+        }
     });
 
     const proposed = await gridiron.client.createTask({
@@ -93,28 +100,37 @@ async function runDemo({ baseUrl, leagueId = DEFAULT_LEAGUE_ID, leagueCode, slee
     };
 }
 
-function readLeagueCode() {
-    if (process.env.A2A_LEAGUE_CODE && String(process.env.A2A_LEAGUE_CODE).trim()) {
-        return String(process.env.A2A_LEAGUE_CODE).trim();
+function readPrivateCode(envName, fileName) {
+    if (process.env[envName] && String(process.env[envName]).trim()) {
+        return String(process.env[envName]).trim();
     }
-    const file = process.env.A2A_LEAGUE_CODE_FILE
-        || path.join(__dirname, '..', 'server', 'data', 'league-code');
+    const file = path.join(__dirname, '..', 'server', 'data', fileName);
     try {
         const code = fs.readFileSync(file, 'utf8').trim();
         if (code) return code;
     } catch (error) {
         if (error.code !== 'ENOENT') throw error;
     }
-    throw new Error('Set A2A_LEAGUE_CODE, or start the desk once so it can write server/data/league-code.');
+    throw new Error(`Set ${envName} privately, or start the desk once so it can write server/data/${fileName}.`);
+}
+
+function readLeagueCode() {
+    return readPrivateCode('A2A_LEAGUE_CODE', 'league-code');
+}
+
+function readCommissionerCode() {
+    return readPrivateCode('A2A_COMMISSIONER_CODE', 'commissioner-code');
 }
 
 async function main() {
     const baseUrl = process.env.A2A_BASE || 'http://127.0.0.1:8787';
     const leagueCode = readLeagueCode();
+    const commissionerCode = readCommissionerCode();
     const result = await runDemo({
         baseUrl,
         leagueId: process.env.A2A_LEAGUE_ID || DEFAULT_LEAGUE_ID,
-        leagueCode
+        leagueCode,
+        commissionerCode
     });
     if (result.task.status.state !== 'input-required') {
         throw new Error(`Expected input-required, got ${result.task.status.state}`);

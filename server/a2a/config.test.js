@@ -8,6 +8,7 @@ const { spawn } = require('child_process');
 const test = require('node:test');
 const {
     loadEnvFile,
+    resolveCommissionerCode,
     resolveCorsOrigins,
     resolveLeagueCode,
     resolveListenHost,
@@ -31,6 +32,7 @@ test('the desk process exits instead of listening on every interface', async () 
             ...process.env,
             HOST: '0.0.0.0',
             A2A_LEAGUE_CODE: 'spawn-test-code',
+            A2A_COMMISSIONER_CODE: 'spawn-commissioner-code',
             A2A_SECRET_KEY: 'spawn-test-key',
             A2A_DATA: dataFile
         }
@@ -65,14 +67,32 @@ test('a missing league code is generated once and then reused', () => {
         code: 'from-env',
         generated: false
     });
-    assert.deepEqual(resolveLeagueCode({ A2A_LEAGUE_CODE: '226' }), {
-        code: '226',
+    assert.deepEqual(resolveLeagueCode({ A2A_LEAGUE_CODE: 'desk-code-example' }), {
+        code: 'desk-code-example',
+        generated: false
+    });
+    const commissionerPath = path.join(dir, 'commissioner-code');
+    const commissioner = resolveCommissionerCode({}, commissionerPath);
+    assert.equal(commissioner.generated, true);
+    assert.equal(commissioner.code === first.code, false);
+    assert.equal(fs.statSync(commissionerPath).mode & 0o777, 0o600);
+    assert.deepEqual(resolveCommissionerCode({ A2A_COMMISSIONER_CODE: 'commissioner-example' }), {
+        code: 'commissioner-example',
         generated: false
     });
     const example = fs.readFileSync(path.join(__dirname, '..', '..', '.env.example'), 'utf8');
-    assert.match(example, /^A2A_LEAGUE_CODE=226$/m);
-    assert.equal(fs.readFileSync(path.join(__dirname, 'config.js'), 'utf8').includes('226'), false);
-    assert.equal(fs.readFileSync(path.join(__dirname, 'index.js'), 'utf8').includes('226'), false);
+    assert.match(example, /^A2A_LEAGUE_CODE=replace-with-a-private-code$/m);
+    assert.match(example, /^A2A_COMMISSIONER_CODE=replace-with-a-private-commissioner-code$/m);
+    const privateSurfaces = [
+        example,
+        fs.readFileSync(path.join(__dirname, 'config.js'), 'utf8'),
+        fs.readFileSync(path.join(__dirname, 'index.js'), 'utf8'),
+        fs.readFileSync(path.join(__dirname, '..', '..', 'README.md'), 'utf8'),
+        fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'components', 'AgentDesk.js'), 'utf8')
+    ];
+    privateSurfaces.forEach((source) => {
+        assert.equal(source.includes('226'), false);
+    });
 });
 
 test('loadEnvFile fills missing keys and leaves existing environment values', () => {
@@ -80,18 +100,18 @@ test('loadEnvFile fills missing keys and leaves existing environment values', ()
     const file = path.join(dir, '.env');
     fs.writeFileSync(file, [
         '# comment',
-        'A2A_LEAGUE_CODE=226',
+        'A2A_LEAGUE_CODE=desk-code-example',
         'A2A_SECRET_KEY="from-file"',
         'A2A_PUBLIC_URL=\'https://desk.example.com\'',
         ''
     ].join('\n'));
     const env = { A2A_SECRET_KEY: 'keep-me', A2A_LEAGUE_CODE: '' };
     loadEnvFile(file, env);
-    assert.equal(env.A2A_LEAGUE_CODE, '226');
+    assert.equal(env.A2A_LEAGUE_CODE, 'desk-code-example');
     assert.equal(env.A2A_SECRET_KEY, 'keep-me');
     assert.equal(env.A2A_PUBLIC_URL, 'https://desk.example.com');
     loadEnvFile(path.join(dir, 'missing.env'), env);
-    assert.equal(env.A2A_LEAGUE_CODE, '226');
+    assert.equal(env.A2A_LEAGUE_CODE, 'desk-code-example');
 });
 
 test('public URL and secret key stay local and unreadable to other users', () => {

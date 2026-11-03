@@ -178,6 +178,7 @@ function createA2AServer({ desk, rateLimit, publicBase, corsOrigins } = {}) {
         publicRead: createRateLimiter(rateLimit?.publicRead || { windowMs: 60 * 1000, max: 120 })
     };
     const registerLockout = createAttemptLockout(rateLimit?.registerLockout);
+    const commissionerLockout = createAttemptLockout(rateLimit?.commissionerLockout);
 
     return http.createServer(async (req, res) => {
         try {
@@ -212,7 +213,7 @@ function createA2AServer({ desk, rateLimit, publicBase, corsOrigins } = {}) {
             res.setHeader('access-control-allow-origin', origin);
         }
         res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS');
-        res.setHeader('access-control-allow-headers', 'authorization, content-type, x-league-code');
+        res.setHeader('access-control-allow-headers', 'authorization, content-type, x-league-code, x-commissioner-code');
         res.setHeader('access-control-max-age', '600');
     }
 
@@ -235,6 +236,38 @@ function createA2AServer({ desk, rateLimit, publicBase, corsOrigins } = {}) {
             error: { code: 'rate_limited', message: 'Too many requests. Try again shortly.' }
         }, { 'retry-after': String(result.retryAfter) });
         return false;
+    }
+
+    async function withCommissioner(req, res, ip, fn) {
+        const locked = commissionerLockout.check(ip);
+        if (!locked.ok) {
+            send(req, res, 429, {
+                error: {
+                    code: 'rate_limited',
+                    message: 'Too many failed commissioner attempts. Try again later.'
+                }
+            }, { 'retry-after': String(locked.retryAfter) });
+            return null;
+        }
+        try {
+            const value = await fn();
+            commissionerLockout.recordSuccess(ip);
+            return value;
+        } catch (error) {
+            if (error instanceof DeskError && error.status === 401) {
+                const result = commissionerLockout.recordFailure(ip);
+                if (result.locked) {
+                    send(req, res, 429, {
+                        error: {
+                            code: 'rate_limited',
+                            message: 'Too many failed commissioner attempts. Try again later.'
+                        }
+                    }, { 'retry-after': String(result.retryAfter) });
+                    return null;
+                }
+            }
+            throw error;
+        }
     }
 
     function allowAuthed(req, res, ip, token) {
@@ -296,7 +329,7 @@ function createA2AServer({ desk, rateLimit, publicBase, corsOrigins } = {}) {
                     baseUrl
                 });
                 registerLockout.recordSuccess(ip);
-                send(req, res, 201, created);
+                send(req, res, created.status === 'pending' ? 202 : 201, created);
             } catch (error) {
                 if (error instanceof DeskError && error.status === 401) {
                     const result = registerLockout.recordFailure(ip);
@@ -312,6 +345,41 @@ function createA2AServer({ desk, rateLimit, publicBase, corsOrigins } = {}) {
                 }
                 throw error;
             }
+            return;
+        }
+
+        if (path === '/api/a2a/claims' && req.method === 'GET') {
+            const listed = await withCommissioner(req, res, ip, () => desk.listClaims({
+                commissionerCode: req.headers['x-commissioner-code'],
+                status: url.searchParams.get('status') || undefined
+            }));
+            if (listed) send(req, res, 200, listed);
+            return;
+        }
+
+        const claimDecision = path.match(/^\/api\/a2a\/claims\/([A-Za-z0-9_-]+)\/decision$/);
+        if (claimDecision) {
+            if (req.method !== 'POST') {
+                send(req, res, 405, { error: { code: 'method_not_allowed', message: 'Use POST to approve or deny a claim.' } });
+                return;
+            }
+            const body = await readBody(req);
+            const decided = await withCommissioner(req, res, ip, () => desk.decideClaim(claimDecision[1], {
+                commissionerCode: req.headers['x-commissioner-code'],
+                decision: body.decision
+            }));
+            if (decided) send(req, res, 200, decided);
+            return;
+        }
+
+        const claimRoute = path.match(/^\/api\/a2a\/claims\/([A-Za-z0-9_-]+)$/);
+        if (claimRoute) {
+            if (req.method !== 'GET') {
+                send(req, res, 405, { error: { code: 'method_not_allowed', message: 'Use GET to check a claim.' } });
+                return;
+            }
+            if (!allowAuthed(req, res, ip, token)) return;
+            send(req, res, 200, desk.redeemClaim(claimRoute[1], token, { baseUrl }));
             return;
         }
 
@@ -502,5 +570,6 @@ module.exports = {
     createA2AServer,
     createAttemptLockout,
     createRateLimiter,
-    defaultNotify
+    defaultNotify,
+    requestPinned
 };

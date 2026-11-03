@@ -14,12 +14,12 @@ function resolveListenHost(env = process.env) {
     return host;
 }
 
-function resolveLeagueCode(env = process.env, codePath) {
-    if (env.A2A_LEAGUE_CODE) {
-        return { code: String(env.A2A_LEAGUE_CODE), generated: false };
+function resolveSecretCode(env, envName, codePath) {
+    if (env[envName]) {
+        return { code: String(env[envName]), generated: false };
     }
     if (!codePath) {
-        throw new Error('A league code file path is required when A2A_LEAGUE_CODE is unset.');
+        throw new Error(`A ${envName} file path is required when ${envName} is unset.`);
     }
     try {
         const existing = fs.readFileSync(codePath, 'utf8').trim();
@@ -36,6 +36,14 @@ function resolveLeagueCode(env = process.env, codePath) {
         // The code is still only in this file.
     }
     return { code, generated: true };
+}
+
+function resolveLeagueCode(env = process.env, codePath) {
+    return resolveSecretCode(env, 'A2A_LEAGUE_CODE', codePath);
+}
+
+function resolveCommissionerCode(env = process.env, codePath) {
+    return resolveSecretCode(env, 'A2A_COMMISSIONER_CODE', codePath);
 }
 
 function resolvePublicBase(env = process.env, port = 8787) {
@@ -116,6 +124,7 @@ function resolveCorsOrigins(env = process.env) {
 
 module.exports = {
     loadEnvFile,
+    resolveCommissionerCode,
     resolveCorsOrigins,
     resolveLeagueCode,
     resolveListenHost,
