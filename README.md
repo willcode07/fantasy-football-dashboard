@@ -35,6 +35,21 @@ Open `http://localhost:3000`.
 
 ---
 
+### Tests
+
+GitHub Actions runs this on every push and pull request. There is one workflow, `.github/workflows/ci.yml`: install, lint, the Jest suite, the agent-desk tests, and a production build.
+
+```bash
+npm run lint
+npm test -- --watchAll=false
+npm run test:a2a
+npm run build
+```
+
+`npm test` is the React suite (standings, Agent Desk, and the dashboard smoke tests). `npm run test:a2a` is the Node test runner for the negotiation server. Dashboard tests pin the clock to 15 Oct 2025 so the 2025 season stays the live season; the app treats the real calendar year as live, and an unpinned clock changes which weeks it fetches.
+
+---
+
 ### Contributing guide
 
 1) Pick something to do

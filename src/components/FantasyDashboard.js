@@ -1,5 +1,5 @@
 // src/components/FantasyDashboard.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import './FantasyDashboard.css';
 import AgentDesk from './AgentDesk';
@@ -58,7 +58,7 @@ function FantasyDashboard() {
     const [deskView, setDeskView] = useState('standings');
 
     // Get current week by checking actual API data - more reliable than hardcoded dates
-    const getCurrentWeekNumber = async () => {
+    const getCurrentWeekNumber = useCallback(async () => {
         try {
             // Try to get the current week by checking for weeks with actual game data
             let currentWeek = 1;
@@ -119,7 +119,7 @@ function FantasyDashboard() {
             // For past seasons, use a conservative estimate
             return selectedSeason === currentYear ? 1 : 17;
         }
-    };
+    }, [leagueId, selectedSeason]);
 
     const [currentWeekNumber, setCurrentWeekNumber] = useState(1);
 
@@ -142,7 +142,7 @@ function FantasyDashboard() {
         };
 
         fetchCurrentWeek();
-    }, [leagueId, selectedSeason]);
+    }, [getCurrentWeekNumber]);
 
     // Load cached data immediately
     useEffect(() => {
@@ -299,7 +299,7 @@ function FantasyDashboard() {
     }, [leagueId, selectedSeason, leagueType, currentWeekNumber, isProjectedSeason, refreshTrigger]);
 
     // Smooth refresh function without hard reload
-    const triggerSmoothRefresh = async (newWeek = null) => {
+    const triggerSmoothRefresh = useCallback(async (newWeek = null) => {
         try {
             setIsRefreshing(true);
             
@@ -328,7 +328,7 @@ function FantasyDashboard() {
             // Reset refreshing state after a brief delay for visual feedback
             setTimeout(() => setIsRefreshing(false), 500);
         }
-    };
+    }, [leagueType, selectedSeason, currentWeekNumber]);
 
     // Auto-refresh data every minute for maximum live data
     useEffect(() => {
@@ -350,7 +350,7 @@ function FantasyDashboard() {
         }, 60 * 1000); // 1 minute for maximum live data updates
 
         return () => clearInterval(refreshInterval);
-    }, [isProjectedSeason, currentWeekNumber, leagueType, selectedSeason]);
+    }, [isProjectedSeason, currentWeekNumber, getCurrentWeekNumber, triggerSmoothRefresh]);
 
     // Get MNPS multiplier helper function
     const getMNPSMultiplier = (season) => {
