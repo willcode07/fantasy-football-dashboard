@@ -17,18 +17,6 @@ class A2AClient {
             leagueCode,
             token
         });
-        if (data.status === 'pending') {
-            return {
-                status: 'pending',
-                claim: data.claim,
-                claimToken: data.claimToken,
-                agent: null,
-                agentToken: null,
-                ownerToken: null,
-                client: null,
-                owner: null
-            };
-        }
         return {
             agent: data.agent,
             agentToken: data.agentToken,
@@ -36,33 +24,6 @@ class A2AClient {
             client: data.agentToken ? new A2AClient({ baseUrl, token: data.agentToken }) : null,
             owner: data.ownerToken ? new A2AClient({ baseUrl, token: data.ownerToken }) : null
         };
-    }
-
-    static decideClaim({ baseUrl, claimId, decision, commissionerCode }) {
-        return request(baseUrl, 'POST', `/api/a2a/claims/${claimId}/decision`, {
-            body: { decision },
-            commissionerCode
-        });
-    }
-
-    static async redeemClaim({ baseUrl, claimId, claimToken }) {
-        const data = await request(baseUrl, 'GET', `/api/a2a/claims/${claimId}`, {
-            token: claimToken
-        });
-        const agentToken = data.agentToken || null;
-        const ownerToken = data.ownerToken || null;
-        return {
-            ...data,
-            agentToken,
-            ownerToken,
-            client: agentToken ? new A2AClient({ baseUrl, token: agentToken }) : null,
-            owner: ownerToken ? new A2AClient({ baseUrl, token: ownerToken }) : null
-        };
-    }
-
-    static listClaims({ baseUrl, commissionerCode, status }) {
-        const query = status ? `?status=${encodeURIComponent(status)}` : '';
-        return request(baseUrl, 'GET', `/api/a2a/claims${query}`, { commissionerCode });
     }
 
     me() {
@@ -94,12 +55,11 @@ class A2AClient {
     }
 }
 
-async function request(baseUrl, method, path, { token, body, leagueCode, commissionerCode } = {}) {
+async function request(baseUrl, method, path, { token, body, leagueCode } = {}) {
     const headers = { accept: 'application/json' };
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (token) headers.authorization = `Bearer ${token}`;
     if (leagueCode) headers['x-league-code'] = leagueCode;
-    if (commissionerCode) headers['x-commissioner-code'] = commissionerCode;
     const response = await fetch(`${baseUrl.replace(/\/$/, '')}${path}`, {
         method,
         headers,

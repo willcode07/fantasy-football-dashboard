@@ -8,7 +8,6 @@ const { spawn } = require('child_process');
 const test = require('node:test');
 const {
     loadEnvFile,
-    resolveCommissionerCode,
     resolveCorsOrigins,
     resolveLeagueCode,
     resolveListenHost,
@@ -32,7 +31,6 @@ test('the desk process exits instead of listening on every interface', async () 
             ...process.env,
             HOST: '0.0.0.0',
             A2A_LEAGUE_CODE: 'spawn-test-code',
-            A2A_COMMISSIONER_CODE: 'spawn-commissioner-code',
             A2A_SECRET_KEY: 'spawn-test-key',
             A2A_DATA: dataFile
         }
@@ -71,23 +69,17 @@ test('a missing league code is generated once and then reused', () => {
         code: 'desk-code-example',
         generated: false
     });
-    const commissionerPath = path.join(dir, 'commissioner-code');
-    const commissioner = resolveCommissionerCode({}, commissionerPath);
-    assert.equal(commissioner.generated, true);
-    assert.equal(commissioner.code === first.code, false);
-    assert.equal(fs.statSync(commissionerPath).mode & 0o777, 0o600);
-    assert.deepEqual(resolveCommissionerCode({ A2A_COMMISSIONER_CODE: 'commissioner-example' }), {
-        code: 'commissioner-example',
-        generated: false
-    });
     const example = fs.readFileSync(path.join(__dirname, '..', '..', '.env.example'), 'utf8');
     assert.match(example, /^A2A_LEAGUE_CODE=replace-with-a-private-code$/m);
-    assert.match(example, /^A2A_COMMISSIONER_CODE=replace-with-a-private-commissioner-code$/m);
+    assert.equal(example.includes('A2A_COMMISSIONER_CODE'), false);
+    const readme = fs.readFileSync(path.join(__dirname, '..', '..', 'README.md'), 'utf8');
+    assert.match(readme, /226/);
+    assert.match(readme, /git history/i);
+    assert.match(readme, /rotat/i);
     const privateSurfaces = [
         example,
         fs.readFileSync(path.join(__dirname, 'config.js'), 'utf8'),
         fs.readFileSync(path.join(__dirname, 'index.js'), 'utf8'),
-        fs.readFileSync(path.join(__dirname, '..', '..', 'README.md'), 'utf8'),
         fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'components', 'AgentDesk.js'), 'utf8')
     ];
     privateSurfaces.forEach((source) => {

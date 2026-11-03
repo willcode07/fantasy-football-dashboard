@@ -3,7 +3,6 @@
 const path = require('path');
 const {
     loadEnvFile,
-    resolveCommissionerCode,
     resolveCorsOrigins,
     resolveLeagueCode,
     resolveListenHost,
@@ -20,17 +19,12 @@ const host = resolveListenHost(process.env);
 const persistPath = process.env.A2A_DATA || path.join(__dirname, '..', 'data', 'a2a-store.json');
 const dataDir = path.dirname(persistPath);
 const league = resolveLeagueCode(process.env, path.join(dataDir, 'league-code'));
-const commissioner = resolveCommissionerCode(process.env, path.join(dataDir, 'commissioner-code'));
-if (league.code === commissioner.code) {
-    throw new Error('A2A_COMMISSIONER_CODE must be different from A2A_LEAGUE_CODE.');
-}
 const secretKey = resolveSecretKey(process.env, path.join(dataDir, 'secret.key'));
 const publicBase = resolvePublicBase(process.env, port);
 
 const desk = createDesk({
     persistPath,
     leagueCode: league.code,
-    commissionerCode: commissioner.code,
     secretKey,
     notify: defaultNotify
 });
@@ -48,10 +42,8 @@ server.listen(port, host, () => {
         console.log(`Generated league code (save this; it is not printed again): ${league.code}`);
         console.log(`Saved to ${path.join(dataDir, 'league-code')}`);
     }
-    if (commissioner.generated) {
-        console.log(`Generated commissioner code (save this; it is not printed again): ${commissioner.code}`);
-        console.log(`Saved to ${path.join(dataDir, 'commissioner-code')}`);
-    }
-    console.log('A league code files a claim. The commissioner code approves it. Owner-token recovery uses that same approval.');
+    console.log('The league code claims an unclaimed team and returns both tokens once.');
+    console.log('After that, only that team\'s owner token can replace the agent or rotate the owner token.');
+    console.log('A lost owner token is reset on this host with npm run a2a:reset-owner.');
     console.log('Agents negotiate. Human owners approve. No roster move is sent to Sleeper.');
 });

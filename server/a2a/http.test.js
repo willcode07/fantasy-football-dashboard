@@ -13,7 +13,6 @@ const { createDesk } = require('./desk');
 const { createA2AServer, createAttemptLockout, createRateLimiter, defaultNotify } = require('./http');
 
 const LEAGUE_CODE = 'test-league-code';
-const COMMISSIONER_CODE = 'test-commissioner-code';
 const PUBLIC_LOOKUP = async () => [{ address: '93.184.216.34', family: 4 }];
 
 async function listen(server) {
@@ -36,13 +35,9 @@ async function withServer(options, fn) {
     const leagueCode = Object.prototype.hasOwnProperty.call(options, 'leagueCode')
         ? options.leagueCode
         : LEAGUE_CODE;
-    const commissionerCode = Object.prototype.hasOwnProperty.call(options, 'commissionerCode')
-        ? options.commissionerCode
-        : COMMISSIONER_CODE;
     const desk = createDesk({
         notify: options.notify,
         leagueCode,
-        commissionerCode,
         persistPath: options.persistPath || null,
         rosters: options.rosters || {
             lg: {
@@ -81,24 +76,11 @@ function team(number, extra = {}) {
 }
 
 async function register(base, body, extra = {}) {
-    const data = await A2AClient.register({
+    return A2AClient.register({
         baseUrl: base,
         leagueCode: Object.prototype.hasOwnProperty.call(extra, 'leagueCode') ? extra.leagueCode : LEAGUE_CODE,
         token: extra.token,
-        ...body,
-        ...(extra.purpose ? { purpose: extra.purpose } : {})
-    });
-    if (extra.pending || data.status !== 'pending') return data;
-    await A2AClient.decideClaim({
-        baseUrl: base,
-        claimId: data.claim.id,
-        decision: 'approve',
-        commissionerCode: extra.commissionerCode || COMMISSIONER_CODE
-    });
-    return A2AClient.redeemClaim({
-        baseUrl: base,
-        claimId: data.claim.id,
-        claimToken: data.claimToken
+        ...body
     });
 }
 
@@ -172,8 +154,7 @@ test('example agents negotiate a trade and owners approve without execution', as
         const result = await runDemo({
             baseUrl: base,
             leagueId: 'lg',
-            leagueCode: LEAGUE_CODE,
-            commissionerCode: COMMISSIONER_CODE
+            leagueCode: LEAGUE_CODE
         });
         assert.equal(result.task.status.state, 'input-required');
         assert.equal(result.task.executed, false);
@@ -291,24 +272,13 @@ test('registration requires the league code and blocks metadata webhooks', async
             () => A2AClient.register({ baseUrl: base, ...team(1) }),
             (error) => error.status === 401 && error.code === 'unauthorized'
         );
-        const filed = await A2AClient.register({
+        const registered = await A2AClient.register({
             baseUrl: base,
             leagueCode: 'open-sesame',
             ...team(1)
         });
-        assert.equal(filed.status, 'pending');
-        await A2AClient.decideClaim({
-            baseUrl: base,
-            claimId: filed.claim.id,
-            decision: 'approve',
-            commissionerCode: COMMISSIONER_CODE
-        });
-        const registered = await A2AClient.redeemClaim({
-            baseUrl: base,
-            claimId: filed.claim.id,
-            claimToken: filed.claimToken
-        });
         assert.equal(typeof registered.agentToken, 'string');
+        assert.equal(typeof registered.ownerToken, 'string');
         await assert.rejects(
             () => A2AClient.register({
                 baseUrl: base,
@@ -529,10 +499,10 @@ test('registration fails closed, checks the roster, and will not hijack an owner
         assert.equal(first.agent.metadata.teamName, 'Team 1');
         assert.equal(first.ownerToken.length > 16, true);
 
-        const hijack = await register(base, { ...team(1), name: 'Hijack' }, { pending: true });
-        assert.equal(hijack.status, 'pending');
-        assert.equal(hijack.claim.purpose, 'rotate-owner');
-        assert.equal(hijack.ownerToken, null);
+        await assert.rejects(
+            () => register(base, { ...team(1), name: 'Hijack' }),
+            (error) => error.status === 403 && error.code === 'forbidden'
+        );
         assert.equal((await first.owner.me()).role, 'owner');
         assert.equal((await first.client.me()).role, 'agent');
 
@@ -673,6 +643,10 @@ test('failed league codes lock the caller IP until the lockout expires', async (
         }
         const createdEarly = await register(base, team(3));
         assert.equal(createdEarly.agent.metadata.teamId, '3');
+        await assert.rejects(
+            () => register(base, team(3), { leagueCode: 'nope' }),
+            (error) => error.status === 403 && error.code === 'forbidden'
+        );
         for (let index = 0; index < 4; index += 1) {
             await assert.rejects(
                 () => register(base, team(1), { leagueCode: 'nope' }),
@@ -708,14 +682,8 @@ test('failed league codes lock the caller IP until the lockout expires', async (
     assert.equal(lockout.size(), 0);
 });
 
-test('claims wait for the commissioner and a known owner id cannot mint a token', async () => {
-    let clock = 8_000_000;
-    await withServer({
-        rateLimit: {
-            register: { windowMs: 10 * 60 * 1000, max: 40, now: () => clock },
-            commissionerLockout: { maxFailures: 5, lockoutMs: 15 * 60 * 1000, now: () => clock }
-        }
-    }, async ({ base }) => {
+test('the first league-code registration owns the team and only that owner token can change it', async () => {
+    await withServer(async ({ base }) => {
         const response = await fetch(`${base}/api/a2a/agents`, {
             method: 'POST',
             headers: {
@@ -724,113 +692,53 @@ test('claims wait for the commissioner and a known owner id cannot mint a token'
             },
             body: JSON.stringify({ ...team(1), sleeperOwnerId: 'user-9' })
         });
-        assert.equal(response.status, 202);
-        const filed = await response.json();
-        assert.equal(filed.status, 'pending');
-        assert.equal(filed.agentToken, undefined);
-        assert.equal(filed.ownerToken, undefined);
-        assert.equal(Object.prototype.hasOwnProperty.call(filed.claim, 'rosterOwnerId'), false);
-        assert.equal(JSON.stringify(filed).includes('user-1'), false);
-        assert.equal(JSON.stringify(filed).includes('user-9'), false);
-
-        const waiting = await A2AClient.redeemClaim({
-            baseUrl: base,
-            claimId: filed.claim.id,
-            claimToken: filed.claimToken
-        });
-        assert.equal(waiting.status, 'pending');
-        assert.equal(waiting.ownerToken, null);
-
-        const listed = await A2AClient.listClaims({
-            baseUrl: base,
-            commissionerCode: COMMISSIONER_CODE,
-            status: 'pending'
-        });
-        assert.equal(listed.claims[0].rosterOwnerId, 'user-1');
-        assert.equal(JSON.stringify(listed).includes(filed.claimToken), false);
-
-        for (let index = 0; index < 4; index += 1) {
-            await assert.rejects(
-                () => A2AClient.decideClaim({
-                    baseUrl: base,
-                    claimId: filed.claim.id,
-                    decision: 'approve',
-                    commissionerCode: 'wrong-commissioner'
-                }),
-                (error) => error.status === 401
-            );
-        }
-        await assert.rejects(
-            () => A2AClient.decideClaim({
-                baseUrl: base,
-                claimId: filed.claim.id,
-                decision: 'approve',
-                commissionerCode: 'wrong-commissioner'
-            }),
-            (error) => error.status === 429 && error.code === 'rate_limited'
-        );
-        await assert.rejects(
-            () => A2AClient.decideClaim({
-                baseUrl: base,
-                claimId: filed.claim.id,
-                decision: 'approve',
-                commissionerCode: COMMISSIONER_CODE
-            }),
-            (error) => error.status === 429
-        );
-        clock += 15 * 60 * 1000;
-        await assert.rejects(
-            () => A2AClient.decideClaim({
-                baseUrl: base,
-                claimId: filed.claim.id,
-                decision: 'approve',
-                commissionerCode: LEAGUE_CODE
-            }),
-            (error) => error.status === 401
-        );
-        const approved = await A2AClient.decideClaim({
-            baseUrl: base,
-            claimId: filed.claim.id,
-            decision: 'approve',
-            commissionerCode: COMMISSIONER_CODE
-        });
-        assert.equal(approved.claim.status, 'approved');
-        assert.equal(JSON.stringify(approved).includes('agentToken'), false);
-        const first = await A2AClient.redeemClaim({
-            baseUrl: base,
-            claimId: filed.claim.id,
-            claimToken: filed.claimToken
-        });
+        assert.equal(response.status, 201);
+        const first = await response.json();
+        assert.equal(first.agentToken.length > 16, true);
         assert.equal(first.ownerToken.length > 16, true);
         assert.equal(first.agent.metadata.teamName, 'Team 1');
-        await assert.rejects(
-            () => A2AClient.redeemClaim({
-                baseUrl: base,
-                claimId: filed.claim.id,
-                claimToken: filed.claimToken
-            }),
-            (error) => error.status === 410
-        );
+        assert.equal(JSON.stringify(first).includes('user-1'), false);
+        assert.equal(JSON.stringify(first).includes('user-9'), false);
 
-        const rotation = await register(base, { ...team(1), purpose: 'rotate-owner' }, { pending: true });
-        assert.equal(rotation.claim.purpose, 'rotate-owner');
-        assert.equal((await first.owner.me()).role, 'owner');
-        await A2AClient.decideClaim({
-            baseUrl: base,
-            claimId: rotation.claim.id,
-            decision: 'approve',
-            commissionerCode: COMMISSIONER_CODE
+        await assert.rejects(
+            () => register(base, { ...team(1), name: 'Takeover' }),
+            (error) => error.status === 403 && error.code === 'forbidden'
+        );
+        const owner = new A2AClient({ baseUrl: base, token: first.ownerToken });
+        const agent = new A2AClient({ baseUrl: base, token: first.agentToken });
+        assert.equal((await owner.me()).role, 'owner');
+
+        await owner.send('DELETE', `/api/a2a/agents/${first.agent.metadata.agentId}`);
+        await assert.rejects(
+            () => register(base, { ...team(1), name: 'After disconnect' }),
+            (error) => error.status === 403 && error.code === 'forbidden'
+        );
+        const revived = await register(base, { ...team(1), name: 'Revived' }, {
+            token: first.ownerToken,
+            leagueCode: null
         });
-        const rotated = await A2AClient.redeemClaim({
-            baseUrl: base,
-            claimId: rotation.claim.id,
-            claimToken: rotation.claimToken
-        });
-        assert.equal(rotated.agentToken, null);
+        assert.equal(revived.ownerToken, null);
+        assert.equal(revived.agent.metadata.agentId, first.agent.metadata.agentId);
+        await assert.rejects(() => agent.me(), (error) => error.status === 401);
+        assert.equal((await revived.client.me()).agent.name, 'Revived');
+        assert.equal((await owner.me()).role, 'owner');
+
+        const other = await register(base, team(2));
+        await assert.rejects(
+            () => other.owner.send('POST', `/api/a2a/agents/${first.agent.metadata.agentId}/owner-token`),
+            (error) => error.status === 403
+        );
+        const rotated = await owner.send('POST', `/api/a2a/agents/${first.agent.metadata.agentId}/owner-token`);
+        assert.equal(rotated.ownerToken.length > 16, true);
         assert.notEqual(rotated.ownerToken, first.ownerToken);
-        await assert.rejects(() => first.owner.me(), (error) => error.status === 401);
-        assert.equal((await first.client.me()).role, 'agent');
-        assert.equal((await rotated.owner.me()).role, 'owner');
+        await assert.rejects(() => owner.me(), (error) => error.status === 401);
+        assert.equal((await revived.client.me()).role, 'agent');
+        const nextOwner = new A2AClient({ baseUrl: base, token: rotated.ownerToken });
+        assert.equal((await nextOwner.me()).role, 'owner');
+        await assert.rejects(
+            () => register(base, team(1), { leagueCode: LEAGUE_CODE }),
+            (error) => error.status === 403
+        );
     });
 });
 

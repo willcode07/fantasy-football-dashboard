@@ -350,19 +350,13 @@ function createDesk(options = {}) {
     const notify = options.notify || (async () => {});
     const persistPath = options.persistPath || null;
     const leagueCode = options.leagueCode == null || options.leagueCode === '' ? null : String(options.leagueCode);
-    const commissionerCode = options.commissionerCode == null || options.commissionerCode === ''
-        ? null
-        : String(options.commissionerCode);
-    if (leagueCode && commissionerCode && leagueCode === commissionerCode) {
-        throw new Error('A2A_COMMISSIONER_CODE must be different from A2A_LEAGUE_CODE.');
-    }
     const secretKey = secretKeyFrom(options.secretKey);
     const lookup = options.lookup || dns.promises.lookup;
-    const state = { agents: {}, tasks: {}, claims: {} };
+    const state = { agents: {}, tasks: {} };
 
     if (persistPath) {
-        loadState(persistPath, state);
-        if (migrateWebhookSecrets(state, secretKey)) persist();
+        const droppedClaims = loadState(persistPath, state);
+        if (migrateWebhookSecrets(state, secretKey) || droppedClaims) persist();
     }
 
     function iso() {
@@ -391,16 +385,6 @@ function createDesk(options = {}) {
         const b = hashToken(leagueCode);
         if (!safeEqualHex(a, b)) {
             throw new DeskError('unauthorized', 'League code is incorrect.', 401);
-        }
-    }
-
-    function assertCommissionerCode(header) {
-        if (!commissionerCode) {
-            throw new DeskError('unauthorized', 'Claims stay pending until a commissioner code is configured.', 401);
-        }
-        const provided = header == null ? '' : String(header);
-        if (!safeEqualHex(hashToken(provided), hashToken(commissionerCode))) {
-            throw new DeskError('unauthorized', 'Commissioner code is incorrect.', 401);
         }
     }
 
@@ -467,6 +451,21 @@ function createDesk(options = {}) {
         return Object.values(state.agents).find((agent) => (
             !agent.revokedAt && agent.leagueId === leagueId && agent.teamId === teamId
         )) || null;
+    }
+
+    function recordForTeam(leagueId, teamId) {
+        const matches = Object.values(state.agents).filter((agent) => (
+            agent.leagueId === leagueId && agent.teamId === teamId
+        ));
+        const active = matches.find((agent) => !agent.revokedAt);
+        if (active) return active;
+        matches.sort((left, right) => (left.createdAt < right.createdAt ? 1 : -1));
+        return matches[0] || null;
+    }
+
+    function ownerMatches(agent, token) {
+        if (!agent || !token || typeof token !== 'string' || token.length < 16 || token.length > 200) return false;
+        return safeEqualHex(hashToken(token), agent.ownerTokenHash);
     }
 
     function publicCard(agent, baseUrl) {
@@ -651,72 +650,6 @@ function createDesk(options = {}) {
         return task.parties.find((party) => party.teamId === auth.agent.teamId) || null;
     }
 
-    function claimPurpose(value) {
-        if (value == null || value === '') return null;
-        const purpose = cleanText(value, 40, { required: true, field: 'purpose' });
-        if (purpose !== 'register' && purpose !== 'rotate-owner') {
-            throw new DeskError('validation', 'purpose must be register or rotate-owner.', 400);
-        }
-        return purpose;
-    }
-
-    function publicClaim(claim, options = {}) {
-        const view = {
-            id: claim.id,
-            status: claim.status,
-            purpose: claim.purpose,
-            teamId: claim.teamId,
-            teamName: claim.teamName,
-            leagueId: claim.leagueId,
-            agentName: claim.agentName,
-            agentId: claim.agentId || null,
-            createdAt: claim.createdAt,
-            decidedAt: claim.decidedAt || null
-        };
-        if (options.commissioner) {
-            view.rosterOwnerId = claim.rosterOwnerId || null;
-        }
-        return view;
-    }
-
-    function pendingClaim(input) {
-        const duplicate = Object.values(state.claims).find((claim) => (
-            claim.status === 'pending'
-            && claim.leagueId === input.leagueId
-            && claim.teamId === input.teamId
-            && claim.purpose === input.purpose
-        ));
-        if (duplicate) {
-            throw new DeskError('conflict', 'A claim for this team is already waiting for the commissioner.', 409);
-        }
-        const claimToken = createToken();
-        const claim = {
-            id: createId('claim'),
-            purpose: input.purpose,
-            status: 'pending',
-            teamId: input.teamId,
-            teamName: input.teamName,
-            leagueId: input.leagueId,
-            rosterOwnerId: input.roster && input.roster.ownerId ? input.roster.ownerId : null,
-            agentName: input.name,
-            description: input.description,
-            webhookUrl: input.webhookUrl || null,
-            webhookSecretEnc: input.webhookSecretEnc || null,
-            agentId: input.agentId || null,
-            claimTokenHash: hashToken(claimToken),
-            pickupEnc: null,
-            createdAt: iso(),
-            decidedAt: null
-        };
-        state.claims[claim.id] = claim;
-        persist();
-        return {
-            status: 'pending',
-            claim: publicClaim(claim),
-            claimToken
-        };
-    }
-
     return {
         authenticate,
         leagueCard(baseUrl) {
@@ -750,160 +683,95 @@ function createDesk(options = {}) {
             const leagueId = cleanId(body.leagueId, 'leagueId');
             const name = cleanText(body.name, 80, { required: true, field: 'name' });
             const roster = await resolveRoster(leagueId, teamId);
-            const teamName = roster.teamName;
+            const canonical = roster.teamName;
             const description = cleanText(body.description, 280)
-                || `${teamName} agent for trades, waiver priority, and FAAB.`;
-            const existing = activeAgentForTeam(leagueId, teamId);
-            const purpose = claimPurpose(body.purpose);
-            if (existing && meta.bearerToken) {
-                const auth = authenticate(meta.bearerToken);
-                if (!auth || auth.role !== 'owner' || auth.agent.id !== existing.id) {
+                || `${canonical} agent for trades, waiver priority, and FAAB.`;
+            const existing = recordForTeam(leagueId, teamId);
+            if (existing) {
+                if (!ownerMatches(existing, meta.bearerToken)) {
                     throw new DeskError(
                         'forbidden',
-                        'An existing agent can only be replaced by that team owner.',
+                        'This team is already claimed. The league code cannot register it again.',
                         403
                     );
                 }
-                if (purpose !== 'rotate-owner') {
-                    const webhookUrl = await assertWebhookUrl(body.webhookUrl, lookup);
-                    const webhookSecret = webhookSecretFrom(body);
-                    const agentToken = createToken();
-                    existing.name = name;
-                    existing.description = description;
-                    existing.teamName = teamName;
-                    existing.webhookUrl = webhookUrl;
-                    existing.webhookSecretEnc = webhookSecret ? encryptSecret(webhookSecret, secretKey) : null;
-                    delete existing.webhookSecret;
-                    existing.agentTokenHash = hashToken(agentToken);
-                    existing.lastWebhookError = null;
-                    persist();
-                    return {
-                        agent: publicCard(existing, meta.baseUrl),
-                        agentToken,
-                        ownerToken: null
-                    };
-                }
+                const webhookUrl = await assertWebhookUrl(body.webhookUrl, lookup);
+                const webhookSecret = webhookSecretFrom(body);
+                const agentToken = createToken();
+                existing.name = name;
+                existing.description = description;
+                existing.teamName = canonical;
+                existing.webhookUrl = webhookUrl;
+                existing.webhookSecretEnc = webhookSecret ? encryptSecret(webhookSecret, secretKey) : null;
+                delete existing.webhookSecret;
+                existing.agentTokenHash = hashToken(agentToken);
+                existing.lastWebhookError = null;
+                existing.revokedAt = null;
+                persist();
+                return {
+                    agent: publicCard(existing, meta.baseUrl),
+                    agentToken,
+                    ownerToken: null
+                };
             }
 
             assertLeagueCode(meta.leagueCode);
-            if (existing || purpose === 'rotate-owner') {
-                if (!existing) {
-                    throw new DeskError('conflict', 'There is no active agent whose owner token can be rotated.', 409);
-                }
-                return pendingClaim({
-                    purpose: 'rotate-owner',
-                    teamId,
-                    teamName,
-                    leagueId,
-                    roster,
-                    name,
-                    description,
-                    agentId: existing.id
-                });
-            }
-
             const webhookUrl = await assertWebhookUrl(body.webhookUrl, lookup);
             const webhookSecret = webhookSecretFrom(body);
-            return pendingClaim({
-                purpose: 'register',
+            const agentToken = createToken();
+            const ownerToken = createToken();
+            const agent = {
+                id: createId('agent'),
                 teamId,
-                teamName,
+                teamName: canonical,
                 leagueId,
-                roster,
                 name,
                 description,
                 webhookUrl,
-                webhookSecretEnc: webhookSecret ? encryptSecret(webhookSecret, secretKey) : null
-            });
-        },
-
-        listClaims(meta = {}) {
-            assertCommissionerCode(meta.commissionerCode);
-            const claims = Object.values(state.claims)
-                .filter((claim) => !meta.status || claim.status === meta.status)
-                .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
-                .map((claim) => publicClaim(claim, { commissioner: true }));
-            return { claims };
-        },
-
-        decideClaim(claimId, meta = {}) {
-            assertCommissionerCode(meta.commissionerCode);
-            const claim = state.claims[claimId];
-            if (!claim) throw new DeskError('not_found', 'Claim not found.', 404);
-            if (claim.status !== 'pending') {
-                throw new DeskError('conflict', 'That claim has already been decided.', 409);
-            }
-            const decision = meta.decision === 'approve' ? 'approve' : meta.decision === 'deny' ? 'deny' : null;
-            if (!decision) {
-                throw new DeskError('validation', 'decision must be approve or deny.', 400);
-            }
-            if (decision === 'deny') {
-                claim.status = 'denied';
-                claim.decidedAt = iso();
-                persist();
-                return { claim: publicClaim(claim, { commissioner: true }) };
-            }
-            if (claim.purpose === 'rotate-owner') {
-                const agent = state.agents[claim.agentId];
-                if (!agent || agent.revokedAt) {
-                    throw new DeskError('conflict', 'That agent is no longer active.', 409);
-                }
-                const ownerToken = createToken();
-                agent.ownerTokenHash = hashToken(ownerToken);
-                claim.pickupEnc = encryptSecret(JSON.stringify({ agentToken: null, ownerToken }), secretKey);
-            } else {
-                if (activeAgentForTeam(claim.leagueId, claim.teamId)) {
-                    throw new DeskError('conflict', 'This team already has an active agent.', 409);
-                }
-                const agentToken = createToken();
-                const ownerToken = createToken();
-                const agent = {
-                    id: createId('agent'),
-                    teamId: claim.teamId,
-                    teamName: claim.teamName,
-                    leagueId: claim.leagueId,
-                    name: claim.agentName,
-                    description: claim.description,
-                    webhookUrl: claim.webhookUrl,
-                    webhookSecretEnc: claim.webhookSecretEnc,
-                    agentTokenHash: hashToken(agentToken),
-                    ownerTokenHash: hashToken(ownerToken),
-                    createdAt: iso(),
-                    revokedAt: null,
-                    lastWebhookError: null
-                };
-                state.agents[agent.id] = agent;
-                claim.agentId = agent.id;
-                claim.pickupEnc = encryptSecret(JSON.stringify({ agentToken, ownerToken }), secretKey);
-            }
-            claim.status = 'approved';
-            claim.decidedAt = iso();
+                webhookSecretEnc: webhookSecret ? encryptSecret(webhookSecret, secretKey) : null,
+                agentTokenHash: hashToken(agentToken),
+                ownerTokenHash: hashToken(ownerToken),
+                createdAt: iso(),
+                revokedAt: null,
+                lastWebhookError: null
+            };
+            state.agents[agent.id] = agent;
             persist();
-            return { claim: publicClaim(claim, { commissioner: true }) };
-        },
-
-        redeemClaim(claimId, claimToken, meta = {}) {
-            const claim = state.claims[claimId];
-            if (!claim || !claimToken) throw new DeskError('not_found', 'Claim not found.', 404);
-            if (!safeEqualHex(hashToken(String(claimToken)), claim.claimTokenHash)) {
-                throw new DeskError('unauthorized', 'Claim token is incorrect.', 401);
-            }
-            if (claim.status === 'pending' || claim.status === 'denied') {
-                return { status: claim.status, claim: publicClaim(claim) };
-            }
-            if (!claim.pickupEnc) {
-                throw new DeskError('gone', 'Those tokens were already retrieved.', 410);
-            }
-            const issued = JSON.parse(decryptSecret(claim.pickupEnc, secretKey));
-            claim.pickupEnc = null;
-            persist();
-            const agent = claim.agentId ? state.agents[claim.agentId] : null;
             return {
-                status: 'approved',
-                claim: publicClaim(claim),
-                agent: agent ? publicCard(agent, meta.baseUrl) : null,
-                agentToken: issued.agentToken || null,
-                ownerToken: issued.ownerToken || null
+                agent: publicCard(agent, meta.baseUrl),
+                agentToken,
+                ownerToken
+            };
+        },
+
+        rotateOwnerToken(agentId, token) {
+            const auth = requireAuth(token);
+            if (auth.role !== 'owner' || auth.agent.id !== agentId) {
+                throw new DeskError('forbidden', 'Only this team owner can rotate the owner token.', 403);
+            }
+            const ownerToken = createToken();
+            auth.agent.ownerTokenHash = hashToken(ownerToken);
+            persist();
+            return { ownerToken, agentId };
+        },
+
+        resetOwnerForTeam({ leagueId, teamId } = {}) {
+            const cleanLeague = cleanId(leagueId, 'leagueId');
+            const cleanTeam = cleanId(teamId, 'teamId');
+            const agent = recordForTeam(cleanLeague, cleanTeam);
+            if (!agent) {
+                throw new DeskError('not_found', 'That team has no agent record.', 404);
+            }
+            const ownerToken = createToken();
+            agent.ownerTokenHash = hashToken(ownerToken);
+            persist();
+            return {
+                ownerToken,
+                agentId: agent.id,
+                teamId: agent.teamId,
+                leagueId: agent.leagueId,
+                teamName: agent.teamName,
+                active: !agent.revokedAt
             };
         },
 
@@ -1233,9 +1101,10 @@ function loadState(persistPath, state) {
         const parsed = JSON.parse(fs.readFileSync(persistPath, 'utf8'));
         state.agents = parsed.agents || {};
         state.tasks = parsed.tasks || {};
-        state.claims = parsed.claims && typeof parsed.claims === 'object' ? parsed.claims : {};
+        return Boolean(parsed.claims);
     } catch (error) {
         if (error.code !== 'ENOENT') throw error;
+        return false;
     }
 }
 

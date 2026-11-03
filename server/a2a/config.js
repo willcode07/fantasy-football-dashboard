@@ -42,10 +42,6 @@ function resolveLeagueCode(env = process.env, codePath) {
     return resolveSecretCode(env, 'A2A_LEAGUE_CODE', codePath);
 }
 
-function resolveCommissionerCode(env = process.env, codePath) {
-    return resolveSecretCode(env, 'A2A_COMMISSIONER_CODE', codePath);
-}
-
 function resolvePublicBase(env = process.env, port = 8787) {
     const raw = env.A2A_PUBLIC_URL;
     if (!raw) return `http://127.0.0.1:${port}`;
@@ -124,7 +120,6 @@ function resolveCorsOrigins(env = process.env) {
 
 module.exports = {
     loadEnvFile,
-    resolveCommissionerCode,
     resolveCorsOrigins,
     resolveLeagueCode,
     resolveListenHost,

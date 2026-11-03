@@ -106,20 +106,20 @@ describe('AgentDesk', () => {
         expect(await screen.findByRole('alert')).toHaveTextContent(/npm run a2a/i);
     });
 
-    test('files a claim and shows the claim token once', async () => {
+    test('registers an unclaimed team and shows both tokens once', async () => {
         mockOnline();
         axios.post.mockResolvedValue({
             data: {
-                status: 'pending',
-                claimToken: 'claim-token-value',
-                claim: {
-                    id: 'claim_4',
-                    status: 'pending',
-                    purpose: 'register',
-                    teamId: '4',
-                    teamName: 'Bench Mob',
-                    leagueId: 'league-1',
-                    agentName: 'Bench Mob Agent'
+                agentToken: 'agent-token-value',
+                ownerToken: 'owner-token-value',
+                agent: {
+                    name: 'Bench Mob Agent',
+                    metadata: {
+                        agentId: 'agent_4',
+                        teamId: '4',
+                        teamName: 'Bench Mob',
+                        leagueId: 'league-1'
+                    }
                 }
             }
         });
@@ -128,15 +128,16 @@ describe('AgentDesk', () => {
         await screen.findByText(/desk connected/i);
 
         expect(screen.queryByLabelText('Sleeper user id')).not.toBeInTheDocument();
+        expect(screen.queryByLabelText('Commissioner code')).not.toBeInTheDocument();
+        expect(screen.queryByLabelText('Registration action')).not.toBeInTheDocument();
         fireEvent.change(screen.getByLabelText('League team'), { target: { value: '4' } });
         fireEvent.change(screen.getByLabelText('League code'), { target: { value: 'league-secret' } });
         expect(screen.getByLabelText('League code')).toHaveValue('league-secret');
         expect(screen.getByLabelText('Team name')).toHaveValue('Bench Mob');
         fireEvent.click(screen.getByRole('button', { name: 'Connect agent' }));
 
-        expect(await screen.findByLabelText('Issued claim token')).toHaveValue('claim-token-value');
-        expect(screen.getByLabelText('Issued claim id')).toHaveValue('claim_4');
-        expect(screen.queryByLabelText('Issued owner token')).not.toBeInTheDocument();
+        expect(await screen.findByLabelText('Issued owner token')).toHaveValue('owner-token-value');
+        expect(screen.getByLabelText('Issued agent token')).toHaveValue('agent-token-value');
         expect(axios.post).toHaveBeenCalledWith(
             '/api/a2a/agents',
             expect.objectContaining({
@@ -149,7 +150,9 @@ describe('AgentDesk', () => {
             })
         );
         expect(axios.post.mock.calls[0][1].sleeperOwnerId).toBeUndefined();
-        expect(saveSessions).not.toHaveBeenCalled();
+        await waitFor(() => expect(saveSessions).toHaveBeenCalled());
+        expect(saveSessions.mock.calls[0][0][0].ownerToken).toBeUndefined();
+        expect(saveSessions.mock.calls[0][0][0].agentToken).toBe('agent-token-value');
     });
 
     test('keeps an owner token in memory for replacement and leaves it out of storage', async () => {
@@ -217,7 +220,6 @@ describe('AgentDesk', () => {
 
         fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }));
         fireEvent.change(screen.getByLabelText('League team'), { target: { value: '4' } });
-        fireEvent.change(screen.getByLabelText('Registration action'), { target: { value: 'replace' } });
         fireEvent.change(screen.getByLabelText('League code'), { target: { value: 'sesame' } });
         fireEvent.click(screen.getByRole('button', { name: 'Connect agent' }));
 
@@ -326,41 +328,28 @@ describe('AgentDesk', () => {
         expect(screen.getByText(/No roster move was sent|No roster move is sent/i)).toBeInTheDocument();
     });
 
-    test('a commissioner approves a claim and the owner token is shown once', async () => {
-        mockOnline();
+    test('rotates the owner token in this tab and leaves it out of storage', async () => {
         axios.get.mockImplementation((url) => {
             const target = String(url);
             if (target.endsWith('/health')) {
                 return Promise.resolve({ data: { ok: true, service: 'a2a' } });
             }
-            if (target.includes('/api/a2a/claims/claim_9')) {
+            if (target.includes('/api/a2a/me')) {
                 return Promise.resolve({
                     data: {
-                        status: 'approved',
-                        ownerToken: 'fresh-owner-token',
-                        agentToken: 'fresh-agent-token',
+                        role: 'owner',
+                        teamId: '4',
+                        teamName: 'Bench Mob',
+                        leagueId: 'league-1',
                         agent: {
                             name: 'Bench Mob Agent',
                             metadata: {
-                                agentId: 'agent_9',
-                                teamId: '9',
+                                agentId: 'agent_4',
+                                teamId: '4',
                                 teamName: 'Bench Mob',
                                 leagueId: 'league-1'
                             }
                         }
-                    }
-                });
-            }
-            if (target.includes('/api/a2a/claims')) {
-                return Promise.resolve({
-                    data: {
-                        claims: [{
-                            id: 'claim_9',
-                            purpose: 'register',
-                            teamName: 'Bench Mob',
-                            agentName: 'Bench Mob Agent',
-                            rosterOwnerId: 'public-owner'
-                        }]
                     }
                 });
             }
@@ -372,34 +361,29 @@ describe('AgentDesk', () => {
             }
             return Promise.resolve({ data: {} });
         });
-        axios.post.mockResolvedValue({ data: { claim: { id: 'claim_9', status: 'approved' } } });
+        axios.post.mockResolvedValue({ data: { ownerToken: 'rotated-owner-token', agentId: 'agent_4' } });
 
         render(<AgentDesk leagueId="league-1" leagueType="redraft" teamNames={{}} />);
         await screen.findByText(/desk connected/i);
-        expect(screen.getByText(/not proof of ownership/i)).toBeInTheDocument();
-        fireEvent.change(screen.getByLabelText('Commissioner code'), { target: { value: 'commissioner-secret' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Refresh pending claims' }));
-        expect(await screen.findByText(/Public Sleeper owner id: public-owner/)).toBeInTheDocument();
-        fireEvent.click(screen.getByRole('button', { name: 'Approve Bench Mob' }));
-        await waitFor(() => {
-            expect(axios.post).toHaveBeenCalledWith(
-                '/api/a2a/claims/claim_9/decision',
-                { decision: 'approve' },
-                expect.objectContaining({
-                    headers: { 'X-Commissioner-Code': 'commissioner-secret' }
-                })
-            );
-        });
-        await waitFor(() => expect(screen.getByRole('button', { name: 'Check claim' })).toBeEnabled());
+        fireEvent.change(screen.getByLabelText('Owner token'), { target: { value: 'owner-token-1' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Claim team' }));
+        await waitFor(() => expect(screen.getByRole('button', { name: /^Inbox/ })).toHaveClass('active'));
+        fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }));
+        fireEvent.click(screen.getByRole('button', { name: 'Rotate owner token' }));
 
-        fireEvent.change(screen.getByLabelText('Claim id'), { target: { value: 'claim_9' } });
-        fireEvent.change(screen.getByLabelText('Claim token'), { target: { value: 'pickup-token' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Check claim' }));
-        expect(await screen.findByLabelText('Issued owner token')).toHaveValue('fresh-owner-token');
-        expect(screen.getByLabelText('Issued agent token')).toHaveValue('fresh-agent-token');
-        await waitFor(() => expect(saveSessions).toHaveBeenCalled());
+        expect(await screen.findByLabelText('Issued owner token')).toHaveValue('rotated-owner-token');
+        expect(screen.getByText(/previous one no longer works/i)).toBeInTheDocument();
+        expect(axios.post).toHaveBeenCalledWith(
+            '/api/a2a/agents/agent_4/owner-token',
+            {},
+            expect.objectContaining({
+                headers: { Authorization: 'Bearer owner-token-1' }
+            })
+        );
         saveSessions.mock.calls.forEach((call) => {
-            expect(JSON.stringify(call[0]).includes('fresh-owner-token')).toBe(false);
+            const stored = JSON.stringify(call[0]);
+            expect(stored.includes('owner-token-1')).toBe(false);
+            expect(stored.includes('rotated-owner-token')).toBe(false);
         });
     });
 });

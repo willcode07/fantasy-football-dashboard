@@ -5,14 +5,12 @@ import {
     getHealth,
     getMe,
     getTask,
-    decideClaim,
     listAgents,
-    listClaims,
     listTasks,
     loadSessions,
-    redeemClaim,
     registerAgent,
     revokeAgent,
+    rotateOwnerToken,
     saveSessions
 } from '../utils/a2aApi';
 
@@ -57,17 +55,10 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
     const [agentName, setAgentName] = useState('');
     const [webhookUrl, setWebhookUrl] = useState('');
     const [leagueCode, setLeagueCode] = useState('');
-    const [action, setAction] = useState('claim');
     const [formError, setFormError] = useState('');
-    const [pendingClaim, setPendingClaim] = useState(null);
     const [issued, setIssued] = useState(null);
     const [claimToken, setClaimToken] = useState('');
     const [claimError, setClaimError] = useState('');
-    const [pickupClaimId, setPickupClaimId] = useState('');
-    const [pickupToken, setPickupToken] = useState('');
-    const [commissionerCode, setCommissionerCode] = useState('');
-    const [commissionerClaims, setCommissionerClaims] = useState([]);
-    const [commissionerError, setCommissionerError] = useState('');
 
     const sessionsRef = useRef(sessions);
     const selectedIdRef = useRef(selectedId);
@@ -177,7 +168,6 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
     async function onRegister(event) {
         event.preventDefault();
         setFormError('');
-        setPendingClaim(null);
         setIssued(null);
         const trimmedTeam = teamId.trim();
         const existing = sessions.find((item) => item.teamId === trimmedTeam && item.leagueId === leagueId && item.ownerToken);
@@ -185,12 +175,8 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
             setFormError('Roster id, team name, and agent name are required.');
             return;
         }
-        if (action === 'replace' && !existing) {
-            setFormError('Paste this team\'s owner token under Claim a team. This tab keeps it in memory only.');
-            return;
-        }
-        if (action !== 'replace' && !leagueCode.trim()) {
-            setFormError('The league code is required to file a claim.');
+        if (!existing && !leagueCode.trim()) {
+            setFormError('The league code is required to register an unclaimed team.');
             return;
         }
         setBusy(true);
@@ -202,21 +188,10 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
                 name: agentName.trim(),
                 webhookUrl: webhookUrl.trim() || undefined
             };
-            if (action === 'rotate-owner') body.purpose = 'rotate-owner';
             const created = await registerAgent(body, {
-                leagueCode: leagueCode.trim(),
-                token: action === 'replace' ? existing.ownerToken : undefined
+                leagueCode: leagueCode.trim() || undefined,
+                token: existing ? existing.ownerToken : undefined
             });
-            if (created.status === 'pending') {
-                setPendingClaim({
-                    id: created.claim.id,
-                    claimToken: created.claimToken,
-                    purpose: created.claim.purpose,
-                    teamName: created.claim.teamName
-                });
-                setDeskState('online');
-                return;
-            }
             const session = sessionFromRegistration(created, existing);
             const next = sessions.filter((item) => item.agentId !== session.agentId
                 && !(item.teamId === session.teamId && item.leagueId === session.leagueId));
@@ -225,8 +200,8 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
             setIssued({
                 teamName: session.teamName,
                 agentToken: created.agentToken || '',
-                ownerToken: '',
-                replaced: true
+                ownerToken: created.ownerToken || '',
+                replaced: !created.ownerToken
             });
             setDeskState('online');
         } catch (error) {
@@ -274,85 +249,30 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
         }
     }
 
-    async function onRedeem(event) {
-        event.preventDefault();
+    async function onRotateOwner(session) {
         setClaimError('');
         setIssued(null);
-        if (!pickupClaimId.trim() || !pickupToken.trim()) {
-            setClaimError('Claim id and claim token are both required.');
+        if (!session.ownerToken) {
+            setClaimError('Paste the owner token in this tab before rotating it.');
             return;
         }
         setBusy(true);
         try {
-            const data = await redeemClaim(pickupClaimId.trim(), pickupToken.trim());
-            if (data.status === 'pending') {
-                setClaimError('The commissioner has not approved this claim yet.');
-                return;
-            }
-            if (data.status === 'denied') {
-                setClaimError('The commissioner denied this claim.');
-                return;
-            }
-            if (!data.agent) {
-                setClaimError('That claim has no agent to pick up.');
-                return;
-            }
-            const previous = sessions.find((item) => item.agentId === data.agent.metadata.agentId);
-            const session = {
-                teamId: data.agent.metadata.teamId,
-                teamName: data.agent.metadata.teamName,
-                leagueId: data.agent.metadata.leagueId,
-                agentId: data.agent.metadata.agentId,
-                agentName: data.agent.name,
-                ownerToken: data.ownerToken || (previous && previous.ownerToken) || '',
-                agentToken: data.agentToken || (previous && previous.agentToken) || ''
-            };
-            const next = sessions.filter((item) => item.agentId !== session.agentId
-                && !(item.teamId === session.teamId && item.leagueId === session.leagueId));
-            next.push(session);
+            const data = await rotateOwnerToken(session.agentId, session.ownerToken);
+            const next = sessions.map((item) => (
+                item.agentId === session.agentId ? { ...item, ownerToken: data.ownerToken } : item
+            ));
             commitSessions(next);
-            setPendingClaim(null);
             setIssued({
                 teamName: session.teamName,
-                agentToken: data.agentToken || '',
-                ownerToken: data.ownerToken || '',
-                replaced: false
+                agentToken: '',
+                ownerToken: data.ownerToken,
+                replaced: false,
+                rotated: true
             });
-            setPickupToken('');
         } catch (error) {
             setClaimError(error.message);
             if (error.code === 'offline') setDeskState('offline');
-        } finally {
-            setBusy(false);
-        }
-    }
-
-    async function onListClaims(event) {
-        event.preventDefault();
-        setCommissionerError('');
-        if (!commissionerCode.trim()) {
-            setCommissionerError('Enter the commissioner code. It stays in this form only.');
-            return;
-        }
-        setBusy(true);
-        try {
-            const data = await listClaims({ commissionerCode: commissionerCode.trim(), status: 'pending' });
-            setCommissionerClaims(Array.isArray(data.claims) ? data.claims : []);
-        } catch (error) {
-            setCommissionerError(error.message);
-        } finally {
-            setBusy(false);
-        }
-    }
-
-    async function onCommissionerDecision(claim, decision) {
-        setCommissionerError('');
-        setBusy(true);
-        try {
-            await decideClaim(claim.id, decision, commissionerCode.trim());
-            setCommissionerClaims((current) => current.filter((item) => item.id !== claim.id));
-        } catch (error) {
-            setCommissionerError(error.message);
         } finally {
             setBusy(false);
         }
@@ -452,14 +372,6 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
                             Agent name
                             <input id="a2a-agent-name" value={agentName} onChange={(event) => setAgentName(event.target.value)} autoComplete="off" />
                         </label>
-                        <label htmlFor="a2a-action">
-                            Registration action
-                            <select id="a2a-action" value={action} onChange={(event) => setAction(event.target.value)}>
-                                <option value="claim">File a claim</option>
-                                <option value="replace">Replace the agent token</option>
-                                <option value="rotate-owner">Request a new owner token</option>
-                            </select>
-                        </label>
                         <label htmlFor="a2a-league-code">
                             League code
                             <input
@@ -468,7 +380,7 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
                                 inputMode="text"
                                 value={leagueCode}
                                 onChange={(event) => setLeagueCode(event.target.value)}
-                                placeholder="From your commissioner"
+                                placeholder="Private league code"
                                 autoComplete="off"
                                 spellCheck="false"
                             />
@@ -485,28 +397,14 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
                         </label>
                         {formError && <p className="a2a-error" role="alert">{formError}</p>}
                         <button type="submit" disabled={busy}>Connect agent</button>
-                        {pendingClaim && (
-                            <div className="a2a-secrets">
-                                <p>
-                                    {pendingClaim.teamName} is waiting for the commissioner.
-                                    Save the claim token. After approval, check the claim to see the owner token once.
-                                </p>
-                                <label>
-                                    Claim id
-                                    <input readOnly aria-label="Issued claim id" value={pendingClaim.id} />
-                                </label>
-                                <label>
-                                    Claim token
-                                    <input readOnly aria-label="Issued claim token" value={pendingClaim.claimToken} />
-                                </label>
-                            </div>
-                        )}
                         {issued && (
                             <div className="a2a-secrets">
                                 <p>
-                                    {issued.replaced
-                                        ? 'Agent token replaced. The owner token in this tab still approves. A refresh clears it.'
-                                        : 'Save these now. The desk stores only hashes and cannot show them again. This tab keeps the owner token in memory until you refresh.'}
+                                    {issued.rotated
+                                        ? 'Save the new owner token. The previous one no longer works. This tab keeps the new one in memory until you refresh.'
+                                        : issued.replaced
+                                            ? 'Agent token replaced. The owner token in this tab still approves. A refresh clears it.'
+                                            : 'Save these now. The desk stores only hashes and cannot show them again. This tab keeps the owner token in memory until you refresh.'}
                                 </p>
                                 {issued.agentToken && (
                                     <label>
@@ -520,7 +418,9 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
                                         <input readOnly aria-label="Issued owner token" value={issued.ownerToken} />
                                     </label>
                                 )}
-                                <p>Give the agent token to your model. Keep the owner token somewhere you control. The agent cannot approve.</p>
+                                {!issued.rotated && (
+                                    <p>Give the agent token to your model. Keep the owner token somewhere you control. The agent cannot approve.</p>
+                                )}
                             </div>
                         )}
                     </form>
@@ -542,30 +442,6 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
                             {claimError && <p className="a2a-error" role="alert">{claimError}</p>}
                             <button type="submit" disabled={busy}>Claim team</button>
                         </form>
-                        <h3>Check a claim</h3>
-                        <form onSubmit={onRedeem}>
-                            <label>
-                                Claim id
-                                <input
-                                    aria-label="Claim id"
-                                    value={pickupClaimId}
-                                    onChange={(event) => setPickupClaimId(event.target.value)}
-                                    autoComplete="off"
-                                    spellCheck="false"
-                                />
-                            </label>
-                            <label>
-                                Claim token
-                                <input
-                                    aria-label="Claim token"
-                                    value={pickupToken}
-                                    onChange={(event) => setPickupToken(event.target.value)}
-                                    autoComplete="off"
-                                    spellCheck="false"
-                                />
-                            </label>
-                            <button type="submit" disabled={busy}>Check claim</button>
-                        </form>
                         <h3>Teams in this tab</h3>
                         {sessions.length === 0 && <p>No teams in this tab yet.</p>}
                         <ul className="a2a-session-list">
@@ -583,48 +459,16 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
                                         )}
                                     </div>
                                     <div className="a2a-row-actions">
+                                        {session.ownerToken && (
+                                            <button type="button" className="a2a-secondary" onClick={() => onRotateOwner(session)} disabled={busy}>
+                                                Rotate owner token
+                                            </button>
+                                        )}
                                         <button type="button" className="a2a-secondary" onClick={() => forgetSession(session)}>
                                             Forget
                                         </button>
                                         <button type="button" className="a2a-danger" onClick={() => disconnectSession(session)} disabled={busy}>
                                             Disconnect
-                                        </button>
-                                    </div>
-                                </li>
-                            ))}
-                        </ul>
-                        <h3>Commissioner</h3>
-                        <p>Sleeper owner id is public and is not proof of ownership. Approve a claim only when you know the manager.</p>
-                        <form onSubmit={onListClaims}>
-                            <label>
-                                Commissioner code
-                                <input
-                                    aria-label="Commissioner code"
-                                    type="password"
-                                    value={commissionerCode}
-                                    onChange={(event) => setCommissionerCode(event.target.value)}
-                                    autoComplete="off"
-                                    spellCheck="false"
-                                />
-                            </label>
-                            {commissionerError && <p className="a2a-error" role="alert">{commissionerError}</p>}
-                            <button type="submit" disabled={busy}>Refresh pending claims</button>
-                        </form>
-                        {commissionerClaims.length === 0 && <p>No pending claims loaded.</p>}
-                        <ul className="a2a-session-list">
-                            {commissionerClaims.map((claim) => (
-                                <li key={claim.id}>
-                                    <div>
-                                        <strong>{claim.teamName}</strong>
-                                        <span>{claim.purpose} · {claim.agentName}</span>
-                                        <span>Public Sleeper owner id: {claim.rosterOwnerId || 'none'}</span>
-                                    </div>
-                                    <div className="a2a-row-actions">
-                                        <button type="button" onClick={() => onCommissionerDecision(claim, 'approve')} disabled={busy}>
-                                            Approve {claim.teamName}
-                                        </button>
-                                        <button type="button" className="a2a-danger" onClick={() => onCommissionerDecision(claim, 'deny')} disabled={busy}>
-                                            Deny {claim.teamName}
                                         </button>
                                     </div>
                                 </li>
@@ -803,7 +647,7 @@ function sessionFromRegistration(created, previous) {
         leagueId: created.agent.metadata.leagueId,
         agentId: created.agent.metadata.agentId,
         agentName: created.agent.name,
-        ownerToken: (previous && previous.ownerToken) || '',
+        ownerToken: created.ownerToken || (previous && previous.ownerToken) || '',
         agentToken: created.agentToken || ''
     };
 }

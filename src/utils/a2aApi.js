@@ -83,24 +83,9 @@ export function revokeAgent(agentId, token) {
     }));
 }
 
-export function listClaims({ commissionerCode, status } = {}) {
-    return unwrap(axios.get(`${a2aBase()}/api/a2a/claims`, {
-        params: status ? { status } : undefined,
-        headers: commissionerCode ? { 'X-Commissioner-Code': commissionerCode } : {},
-        timeout: 8000
-    }));
-}
-
-export function decideClaim(claimId, decision, commissionerCode) {
-    return unwrap(axios.post(`${a2aBase()}/api/a2a/claims/${claimId}/decision`, { decision }, {
-        headers: { 'X-Commissioner-Code': commissionerCode },
-        timeout: 8000
-    }));
-}
-
-export function redeemClaim(claimId, claimToken) {
-    return unwrap(axios.get(`${a2aBase()}/api/a2a/claims/${claimId}`, {
-        headers: authHeaders(claimToken),
+export function rotateOwnerToken(agentId, token) {
+    return unwrap(axios.post(`${a2aBase()}/api/a2a/agents/${agentId}/owner-token`, {}, {
+        headers: authHeaders(token),
         timeout: 8000
     }));
 }

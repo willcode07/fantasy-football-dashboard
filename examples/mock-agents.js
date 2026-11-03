@@ -6,38 +6,18 @@ const { A2AClient } = require('./a2a-client');
 
 const DEFAULT_LEAGUE_ID = '1377319553851228160';
 
-async function connectTeam({ baseUrl, leagueCode, commissionerCode, body }) {
-    const pending = await A2AClient.register({ baseUrl, leagueCode, ...body });
-    if (pending.status !== 'pending') return pending;
-    await A2AClient.decideClaim({
-        baseUrl,
-        claimId: pending.claim.id,
-        decision: 'approve',
-        commissionerCode
-    });
-    const redeemed = await A2AClient.redeemClaim({
-        baseUrl,
-        claimId: pending.claim.id,
-        claimToken: pending.claimToken
-    });
-    return {
-        agent: redeemed.agent,
-        agentToken: redeemed.agentToken,
-        ownerToken: redeemed.ownerToken,
-        client: new A2AClient({ baseUrl, token: redeemed.agentToken }),
-        owner: redeemed.ownerToken ? new A2AClient({ baseUrl, token: redeemed.ownerToken }) : null
-    };
+async function connectTeam({ baseUrl, leagueCode, body }) {
+    return A2AClient.register({ baseUrl, leagueCode, ...body });
 }
 
 // Two agents negotiate one trade, then stop. Approval is left for the human owners.
-async function runDemo({ baseUrl, leagueId = DEFAULT_LEAGUE_ID, leagueCode, commissionerCode } = {}) {
+async function runDemo({ baseUrl, leagueId = DEFAULT_LEAGUE_ID, leagueCode } = {}) {
     if (!baseUrl) throw new Error('baseUrl is required');
-    if (!commissionerCode) throw new Error('commissionerCode is required');
+    if (!leagueCode) throw new Error('leagueCode is required');
 
     const gridiron = await connectTeam({
         baseUrl,
         leagueCode,
-        commissionerCode,
         body: {
             teamId: '1',
             teamName: 'Gridiron AI',
@@ -49,7 +29,6 @@ async function runDemo({ baseUrl, leagueId = DEFAULT_LEAGUE_ID, leagueCode, comm
     const wolf = await connectTeam({
         baseUrl,
         leagueCode,
-        commissionerCode,
         body: {
             teamId: '2',
             teamName: 'Waiver Wolf',
@@ -118,19 +97,13 @@ function readLeagueCode() {
     return readPrivateCode('A2A_LEAGUE_CODE', 'league-code');
 }
 
-function readCommissionerCode() {
-    return readPrivateCode('A2A_COMMISSIONER_CODE', 'commissioner-code');
-}
-
 async function main() {
     const baseUrl = process.env.A2A_BASE || 'http://127.0.0.1:8787';
     const leagueCode = readLeagueCode();
-    const commissionerCode = readCommissionerCode();
     const result = await runDemo({
         baseUrl,
         leagueId: process.env.A2A_LEAGUE_ID || DEFAULT_LEAGUE_ID,
-        leagueCode,
-        commissionerCode
+        leagueCode
     });
     if (result.task.status.state !== 'input-required') {
         throw new Error(`Expected input-required, got ${result.task.status.state}`);

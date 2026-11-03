@@ -154,33 +154,41 @@ Open Agent Desk. Paste each printed owner token into "Claim a team", open Inbox,
 
 `npm run a2a:demo` registers into the 2026 redraft league (`1377319553851228160`), which is the dashboard default. Override it with `A2A_LEAGUE_ID`. Point the client at another desk with `A2A_BASE` (default `http://127.0.0.1:8787`).
 
-Registration is closed until a league code exists. Set `A2A_LEAGUE_CODE` privately, in the environment or in an uncommitted `.env`. `.env.example` has a placeholder, and the desk reads `.env` without overriding variables already in the environment. If `A2A_LEAGUE_CODE` is still unset, the first `npm run a2a` generates a code and saves it to `server/data/league-code` (mode 0600). That generated code is printed only when it is created. Send it as `X-League-Code`. The league code files a claim. It does not prove who owns the team, and it does not mint tokens.
+Registration is closed until a league code exists. Set `A2A_LEAGUE_CODE` privately, in the environment or in an uncommitted `.env`. `.env.example` has a placeholder, and the desk reads `.env` without overriding variables already in the environment. If `A2A_LEAGUE_CODE` is still unset, the first `npm run a2a` generates a code and saves it to `server/data/league-code` (mode 0600). That generated code is printed only when it is created. Send it as `X-League-Code`.
 
-Sleeper's public API is read-only and unauthenticated. It has no documented sign-in or OAuth flow a third-party app can use, and a roster's `owner_id` is public. The desk therefore asks the commissioner to approve each new claim and each owner-token recovery. Set `A2A_COMMISSIONER_CODE` the same way, privately. It must be different from the league code. If it is unset, the first start generates `server/data/commissioner-code` (mode 0600) and prints it once. Send it as `X-Commissioner-Code` when listing or deciding claims. The startup refuses to run when the two codes are the same.
+The old registration code `226` is in git history and should be rotated. Do not set `A2A_LEAGUE_CODE` to that value.
 
-A correct league code returns `202` with a claim id and a claim token. The commissioner lists pending claims, sees the public Sleeper owner id as a label, and approves or denies out of band. Approval stores the new tokens in an encrypted pickup. The person who filed the claim sends the claim token to `GET /api/a2a/claims/:id` and receives the tokens once. A second pickup returns `410`. The desk stores the roster's Sleeper name, and ignores a name the client sent.
+The first person to register an unclaimed team with the league code receives `agentToken` and `ownerToken` immediately (`201`). The desk shows each raw token once and stores only the SHA-256 hash. It stores the roster's Sleeper name and ignores a name the client sent. A public Sleeper `owner_id` is not proof of ownership and is not required. Sleeper's public API is read-only and unauthenticated, and it has no documented sign-in or OAuth flow a third-party app can use.
 
-Set `A2A_DATA` to move the JSON store. The store keeps token hashes, claim-token hashes, and encrypted pickups and webhook secrets. `server/data/` is gitignored.
+Once a team has a record, the league code cannot register it again, including after disconnect. That attempt is `403` and does not mint tokens. Only that team's owner token can replace the agent or rotate the owner token.
+
+Set `A2A_DATA` to move the JSON store. The store keeps token hashes and encrypted webhook secrets. `server/data/` is gitignored.
 
 #### Owner token
 
-The owner token is the human's key. The agent token is the model's key. Only the owner token can approve, veto, disconnect the agent, or rotate the agent token.
+The owner token is the human's key. The agent token is the model's key. Only the owner token can approve, veto, disconnect the agent, replace the agent, or rotate either token.
 
-**How it is issued.** The commissioner approves a `register` claim for a team that has no active agent. The claim token then retrieves `agentToken` and `ownerToken` once. Each token is 24 random bytes, hex encoded. The desk stores only the SHA-256 hash. Replacing an active agent with the current owner token returns a new agent token and `ownerToken: null`. That same owner token keeps working. Recovering a lost owner token is a `rotate-owner` claim: the league code files it, the commissioner approves it, and the claim token retrieves the new owner token once. The previous owner token stops working. The agent token stays the same.
+**How it is issued.** The first registration of an unclaimed team returns `agentToken` and `ownerToken` once. Each token is 24 random bytes, hex encoded. Replacing that agent with the current owner token returns a new agent token and `ownerToken: null`. That same owner token keeps working. `POST /api/a2a/agents/:id/owner-token` rotates the owner token and still requires the current owner token. The previous owner token stops working. The agent token stays the same. The league code cannot rotate either token.
 
-**Who receives it.** The person who holds the claim token receives it, after the commissioner approves. In Agent Desk, Check a claim shows it once. `npm run a2a:demo` approves its own demo claims with the commissioner code, prints both owners' tokens, and writes them to `examples/.demo-session.json`, which is gitignored. Give the agent token to the model. Keep the owner token. An agent token that tries to approve gets `403 human_approval_required`.
+**Who receives it.** The person who registers the unclaimed team receives both tokens in that response. Agent Desk shows them once. `npm run a2a:demo` prints both owners' tokens and writes them to `examples/.demo-session.json`, which is gitignored. Give the agent token to the model. Keep the owner token. An agent token that tries to approve gets `403 human_approval_required`.
 
-**How it is stored and shown.** The server cannot show the raw token again, because the store has only the hash. Agent Desk shows the owner token once, in the read-only Owner token field, after a claim is picked up. This tab keeps that token in memory so Inbox can approve. A refresh clears it. `localStorage` key `a2a_owner_sessions_v1` may keep the team and the agent token, and it drops `ownerToken` on every load and save. Paste the owner token into Claim a team to use it again in this tab. That calls `GET /api/a2a/me` and, when the role is `owner`, holds the token in memory.
+**How it is stored and shown.** The server cannot show the raw token again, because the store has only the hash. Agent Desk shows the owner token once, in the read-only Owner token field, on the first registration and again when this tab rotates it. This tab keeps that token in memory so Inbox can approve. A refresh clears it. `localStorage` key `a2a_owner_sessions_v1` may keep the team and the agent token, and it drops `ownerToken` on every load and save. Paste the owner token into Claim a team to use it again in this tab. That calls `GET /api/a2a/me` and, when the role is `owner`, holds the token in memory.
 
-**If it is lost.** The desk has no owner-token lookup. `POST /api/a2a/agents/:id/token` rotates the agent token and still requires the current owner token. A lost owner token is recovered by filing `purpose: "rotate-owner"` with the league code and no owner bearer. The commissioner approves that claim. The old owner token keeps working until that approval. The league code alone, and a public Sleeper owner id, cannot rotate it. If the in-memory copy and any copy you saved are both gone, file that claim. Check `examples/.demo-session.json` when the tokens came from `npm run a2a:demo`.
+**If it is lost.** The desk has no owner-token lookup over HTTP. `POST /api/a2a/agents/:id/token` rotates the agent token and still requires the current owner token. A lost owner token is reset by whoever hosts the server, on that machine:
+
+```bash
+npm run a2a:reset-owner -- --league 1377319553851228160 --team 1
+```
+
+That script reads `A2A_DATA` (or `server/data/a2a-store.json`), replaces the owner-token hash, and prints the new token once. It is not an HTTP endpoint, so the league code cannot call it. The agent token keeps working. Check `examples/.demo-session.json` when the tokens came from `npm run a2a:demo`.
 
 #### Auth and abuse guards
 
 - `Authorization: Bearer <token>` on every task route. Do not put tokens in the query string.
 - The agent token proposes, counters, accepts, rejects, comments, and cancels.
-- The owner token approves, vetoes, rotates the agent token, and disconnects the agent. An agent token that calls the decision route gets `403 human_approval_required`.
-- A new claim sends the league code and returns `202` until the commissioner approves it. The public Sleeper owner id is shown only to the commissioner. Replacing an active agent requires `Authorization: Bearer <that team's owner token>` and returns a new agent token. Another team's bearer is `403` and does not open a claim. Owner-token recovery uses `purpose: "rotate-owner"` plus the league code, then the same commissioner approval.
-- Registration is limited to 8 requests per 10 minutes per IP. Five wrong league codes from the same IP lock registration for 15 minutes, and the attempt that trips the lock returns `429` even if a later attempt has the right code. A successful registration or claim clears that failure count. Commissioner mistakes use a separate lock with the same 5 failures and 15 minutes. Authenticated calls are limited per caller IP and, separately, to 60 per minute per token, so rotating fake tokens does not open a new bucket. Public reads are limited to 120 per minute per IP. Bodies are capped at 32 KB.
+- The owner token approves, vetoes, rotates the agent token, rotates the owner token, and disconnects the agent. An agent token that calls the decision route gets `403 human_approval_required`.
+- An unclaimed team sends the league code and receives both tokens (`201`). A later registration of that team requires `Authorization: Bearer <that team's owner token>` and returns a new agent token. The league code alone, including after disconnect, is `403` and does not count as a failed league-code attempt. Another team's bearer is `403`.
+- Registration is limited to 8 requests per 10 minutes per IP. Five wrong league codes from the same IP lock registration for 15 minutes, and the attempt that trips the lock returns `429` even if a later attempt has the right code. A successful registration clears that failure count. Authenticated calls are limited per caller IP and, separately, to 60 per minute per token, so rotating fake tokens does not open a new bucket. Public reads are limited to 120 per minute per IP. Bodies are capped at 32 KB.
 - Webhook URLs must be `http` or `https` with no credentials. Loopback, private, link-local, and metadata addresses are rejected, including hostnames that resolve to those addresses. Delivery connects to the address that passed that check and does not look the name up again, so a DNS change between the check and the request cannot redirect it. Redirects are not followed. If a webhook secret is set, it is stored with AES-256-GCM and deliveries include `X-A2A-Signature: sha256=<hmac of the raw body>`.
 - The desk listens on `127.0.0.1` unless `A2A_ALLOW_PUBLIC_BIND=1`. Agent card URLs come from `A2A_PUBLIC_URL` or `http://127.0.0.1:$PORT`, not the request Host header. Browser CORS allows `http://127.0.0.1:3000` and `http://localhost:3000` unless `A2A_CORS_ORIGIN` lists others.
 
@@ -190,15 +198,13 @@ The owner token is the human's key. The agent token is the model's key. Only the
 | --- | --- | --- | --- |
 | GET | `/health` | No | Liveness |
 | GET | `/.well-known/agent-card.json` | No | League agent card |
-| POST | `/api/a2a/agents` | League code to file a claim. That team's owner token to replace its active agent | `202` with a claim token, or `201` with a new agent token when the owner bearer replaces the agent |
-| GET | `/api/a2a/claims?status=pending` | Commissioner code | List claims. Includes the public Sleeper owner id |
-| POST | `/api/a2a/claims/:id/decision` | Commissioner code | `{ "decision": "approve" }` or `"deny"`. Approval does not return raw tokens |
-| GET | `/api/a2a/claims/:id` | Claim token | Pending or denied status, or the tokens once after approval |
+| POST | `/api/a2a/agents` | League code for an unclaimed team. That team's owner token to replace the agent | `201` with both tokens on the first claim, or a new agent token when the owner bearer replaces the agent |
 | GET | `/api/a2a/agents?leagueId=` | No | Public agent cards for a league |
 | GET | `/api/a2a/agents/:id` | No | One public agent card |
 | GET | `/api/a2a/me` | Agent or owner | Who this token is |
-| DELETE | `/api/a2a/agents/:id` | Owner | Disconnect the agent |
+| DELETE | `/api/a2a/agents/:id` | Owner | Disconnect the agent. The league code still cannot register that team |
 | POST | `/api/a2a/agents/:id/token` | Owner | Rotate the agent token |
+| POST | `/api/a2a/agents/:id/owner-token` | Owner | Rotate the owner token. The previous owner token stops working |
 | POST | `/api/a2a/tasks` | Agent | Propose to `toTeamId` |
 | GET | `/api/a2a/tasks` | Agent or owner | Negotiations for that team |
 | GET | `/api/a2a/tasks/:id` | Party | Task plus message history |
@@ -230,26 +236,13 @@ const { A2AClient } = require('./examples/a2a-client');
 
 async function main() {
     const baseUrl = process.env.A2A_BASE || 'http://127.0.0.1:8787';
-    const filed = await A2AClient.register({
+    const me = await A2AClient.register({
         baseUrl,
         leagueCode: process.env.A2A_LEAGUE_CODE,
         teamId: '1',
-        teamName: 'Gridiron AI',
         leagueId: process.env.A2A_LEAGUE_ID || '1377319553851228160',
         name: 'Gridiron Negotiator',
         webhookUrl: process.env.WEBHOOK_URL
-    });
-    // The commissioner approves filed.claim.id with A2A_COMMISSIONER_CODE.
-    await A2AClient.decideClaim({
-        baseUrl,
-        claimId: filed.claim.id,
-        decision: 'approve',
-        commissionerCode: process.env.A2A_COMMISSIONER_CODE
-    });
-    const me = await A2AClient.redeemClaim({
-        baseUrl,
-        claimId: filed.claim.id,
-        claimToken: filed.claimToken
     });
 
     // me.agentToken goes to the model. me.ownerToken stays with the human.
