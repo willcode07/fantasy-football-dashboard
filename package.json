@@ -17,10 +17,16 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
+    "test:a2a": "node --test server/a2a/config.test.js server/a2a/desk.test.js server/a2a/http.test.js server/a2a/reset-owner.test.js",
+    "lint": "eslint src --ext .js,.jsx",
+    "a2a": "node server/a2a/index.js",
+    "a2a:demo": "node examples/mock-agents.js",
+    "a2a:reset-owner": "node server/a2a/reset-owner.js",
     "eject": "react-scripts eject",
     "predeploy": "npm run build",
     "deploy": "gh-pages -d build"
   },
+  "proxy": "http://127.0.0.1:8787",
   "eslintConfig": {
     "extends": [
       "react-app",

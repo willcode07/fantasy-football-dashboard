@@ -432,6 +432,10 @@ td {
     background-color: #333333;
 }
 
+.view-switcher {
+    margin-top: 8px;
+}
+
 /* Add subtle animation for refreshing state */
 .refresh-button:disabled::after {
     content: '';

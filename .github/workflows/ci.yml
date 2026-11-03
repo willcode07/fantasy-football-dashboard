@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Agent desk tests
+        run: npm run test:a2a
+      - name: Jest
+        run: npm test -- --watchAll=false --forceExit
+        env:
+          CI: true
+      - name: Build
+        run: npm run build
+        env:
+          CI: true
