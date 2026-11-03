@@ -53,6 +53,7 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
     const [teamName, setTeamName] = useState('');
     const [agentName, setAgentName] = useState('');
     const [webhookUrl, setWebhookUrl] = useState('');
+    const [leagueCode, setLeagueCode] = useState('');
     const [formError, setFormError] = useState('');
     const [fresh, setFresh] = useState(null);
     const [claimToken, setClaimToken] = useState('');
@@ -172,21 +173,27 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
         }
         setBusy(true);
         try {
+            const trimmedTeam = teamId.trim();
+            const existing = sessions.find((item) => item.teamId === trimmedTeam && item.leagueId === leagueId);
             const created = await registerAgent({
-                teamId: teamId.trim(),
+                teamId: trimmedTeam,
                 teamName: teamName.trim(),
                 leagueId,
                 name: agentName.trim(),
                 webhookUrl: webhookUrl.trim() || undefined
+            }, {
+                leagueCode: leagueCode.trim(),
+                token: existing && existing.ownerToken
             });
-            const session = sessionFromRegistration(created);
-            const next = sessions.filter((item) => item.agentId !== session.agentId && item.teamId !== session.teamId);
+            const session = sessionFromRegistration(created, existing);
+            const next = sessions.filter((item) => item.agentId !== session.agentId
+                && !(item.teamId === session.teamId && item.leagueId === session.leagueId));
             next.push(session);
             commitSessions(next);
             setFresh({
                 teamName: session.teamName,
                 agentToken: created.agentToken,
-                ownerToken: created.ownerToken
+                ownerToken: created.ownerToken || ''
             });
             setDeskState('online');
         } catch (error) {
@@ -324,6 +331,16 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
                             Agent name
                             <input id="a2a-agent-name" value={agentName} onChange={(event) => setAgentName(event.target.value)} autoComplete="off" />
                         </label>
+                        <label htmlFor="a2a-league-code">
+                            League code
+                            <input
+                                id="a2a-league-code"
+                                value={leagueCode}
+                                onChange={(event) => setLeagueCode(event.target.value)}
+                                autoComplete="off"
+                                spellCheck="false"
+                            />
+                        </label>
                         <label htmlFor="a2a-webhook">
                             Webhook URL
                             <input
@@ -338,15 +355,21 @@ function AgentDesk({ leagueId, leagueType, teamNames = {} }) {
                         <button type="submit" disabled={busy}>Connect agent</button>
                         {fresh && (
                             <div className="a2a-secrets">
-                                <p>Save these now. The desk stores only hashes and cannot show them again. This browser keeps a copy until you forget the team.</p>
+                                <p>
+                                    {fresh.ownerToken
+                                        ? 'Save these now. The desk stores only hashes and cannot show them again. This browser keeps a copy until you forget the team.'
+                                        : 'Agent token replaced. The owner token already saved in this browser still approves.'}
+                                </p>
                                 <label>
                                     Agent token
                                     <input readOnly aria-label="Issued agent token" value={fresh.agentToken} />
                                 </label>
-                                <label>
-                                    Owner token
-                                    <input readOnly aria-label="Issued owner token" value={fresh.ownerToken} />
-                                </label>
+                                {fresh.ownerToken && (
+                                    <label>
+                                        Owner token
+                                        <input readOnly aria-label="Issued owner token" value={fresh.ownerToken} />
+                                    </label>
+                                )}
                                 <p>Give the agent token to your model. Keep the owner token. The agent cannot approve.</p>
                             </div>
                         )}
@@ -556,14 +579,14 @@ async function readTask(taskId, sessions) {
     throw lastError || new Error('Claim a team to open this negotiation.');
 }
 
-function sessionFromRegistration(created) {
+function sessionFromRegistration(created, previous) {
     return {
         teamId: created.agent.metadata.teamId,
         teamName: created.agent.metadata.teamName,
         leagueId: created.agent.metadata.leagueId,
         agentId: created.agent.metadata.agentId,
         agentName: created.agent.name,
-        ownerToken: created.ownerToken,
+        ownerToken: created.ownerToken || (previous && previous.ownerToken) || '',
         agentToken: created.agentToken
     };
 }

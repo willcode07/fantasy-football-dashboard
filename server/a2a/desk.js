@@ -1,7 +1,9 @@
 'use strict';
 
 const crypto = require('crypto');
+const dns = require('dns');
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 
 const KINDS = ['trade', 'waiver_priority', 'faab'];
@@ -72,7 +74,81 @@ function cleanId(value, field) {
     return text;
 }
 
-function assertWebhookUrl(value) {
+const BLOCKED_HOST_NAMES = new Set([
+    'localhost',
+    'localhost.localdomain',
+    'metadata',
+    'metadata.google.internal',
+    'instance-data'
+]);
+
+function parseIpPart(part) {
+    if (/^0x[0-9a-f]+$/i.test(part)) return parseInt(part, 16);
+    if (/^0[0-7]+$/.test(part)) return parseInt(part, 8);
+    if (/^\d+$/.test(part)) return Number(part);
+    return null;
+}
+
+function isBlockedIpv4(address) {
+    const parts = address.split('.').map((part) => Number(part));
+    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+        return true;
+    }
+    const [a, b] = parts;
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    if (a >= 224) return true;
+    return false;
+}
+
+function isBlockedIpv6(address) {
+    const value = address.toLowerCase();
+    if (value === '::' || value === '::0' || value === '::1') return true;
+    const dotted = value.match(/(\d+\.\d+\.\d+\.\d+)$/);
+    if (dotted) return isBlockedIpv4(dotted[1]);
+    const mapped = value.match(/ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (mapped) {
+        const hi = parseInt(mapped[1], 16);
+        const lo = parseInt(mapped[2], 16);
+        return isBlockedIpv4(`${(hi >> 8) & 255}.${hi & 255}.${(lo >> 8) & 255}.${lo & 255}`);
+    }
+    if (/^fe[89ab][0-9a-f]:/.test(value)) return true;
+    if (/^f[cd][0-9a-f]{2}:/.test(value)) return true;
+    if (/^ff[0-9a-f]{2}:/.test(value)) return true;
+    return false;
+}
+
+function isBlockedIp(address) {
+    if (typeof address !== 'string' || !address) return true;
+    const value = address.trim().toLowerCase();
+    const version = net.isIP(value);
+    if (version === 4) return isBlockedIpv4(value);
+    if (version === 6) return isBlockedIpv6(value);
+    return true;
+}
+
+function classifyHost(hostname) {
+    const name = String(hostname || '').replace(/\.$/, '').toLowerCase();
+    if (!name || BLOCKED_HOST_NAMES.has(name)) return { blocked: true };
+    if (name.endsWith('.local') || name.endsWith('.localhost') || name.endsWith('.internal')) {
+        return { blocked: true };
+    }
+    if (net.isIP(name) === 6) return { ip: name };
+    const labels = name.split('.');
+    if (labels.every((label) => parseIpPart(label) != null)) {
+        if (labels.length !== 4) return { blocked: true };
+        const nums = labels.map((label) => parseIpPart(label));
+        if (nums.some((num) => num > 255)) return { blocked: true };
+        return { ip: nums.join('.') };
+    }
+    if (!name.includes('.')) return { blocked: true };
+    return { name };
+}
+
+async function assertWebhookUrl(value, lookup = dns.promises.lookup) {
     if (value == null || value === '') return null;
     if (typeof value !== 'string' || value.length > 300) {
         throw new DeskError('validation', 'webhookUrl must be an http(s) URL.', 400);
@@ -89,11 +165,51 @@ function assertWebhookUrl(value) {
     if (parsed.username || parsed.password) {
         throw new DeskError('validation', 'webhookUrl cannot include credentials.', 400);
     }
-    const host = parsed.hostname.toLowerCase();
-    if (host === '169.254.169.254' || host === 'metadata.google.internal') {
+    const classified = classifyHost(parsed.hostname);
+    if (classified.blocked || (classified.ip && isBlockedIp(classified.ip))) {
+        throw new DeskError('validation', 'webhookUrl is not allowed.', 400);
+    }
+    if (classified.ip) return parsed.toString();
+    let records;
+    try {
+        records = await lookup(classified.name, { all: true });
+    } catch (error) {
+        throw new DeskError('validation', 'webhookUrl could not be resolved.', 400);
+    }
+    const list = Array.isArray(records) ? records : [records];
+    const addresses = list.map((record) => (typeof record === 'string' ? record : record && record.address));
+    if (addresses.length === 0 || addresses.some((address) => isBlockedIp(address))) {
         throw new DeskError('validation', 'webhookUrl is not allowed.', 400);
     }
     return parsed.toString();
+}
+
+function encryptSecret(plain, key) {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const ciphertext = Buffer.concat([cipher.update(String(plain), 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return `v1:${iv.toString('base64')}:${tag.toString('base64')}:${ciphertext.toString('base64')}`;
+}
+
+function decryptSecret(enc, key) {
+    const parts = String(enc || '').split(':');
+    if (parts.length !== 4 || parts[0] !== 'v1') {
+        throw new Error('Webhook secret could not be decrypted.');
+    }
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(parts[1], 'base64'));
+    decipher.setAuthTag(Buffer.from(parts[2], 'base64'));
+    return Buffer.concat([
+        decipher.update(Buffer.from(parts[3], 'base64')),
+        decipher.final()
+    ]).toString('utf8');
+}
+
+function secretKeyFrom(value) {
+    if (!value) return crypto.randomBytes(32);
+    if (Buffer.isBuffer(value) && value.length === 32) return value;
+    if (typeof value === 'string' && value) return crypto.createHash('sha256').update(value).digest();
+    throw new Error('secretKey must be 32 bytes or a passphrase string.');
 }
 
 function stringList(value, field) {
@@ -167,15 +283,62 @@ function summarize(kind, terms, proposerName) {
     return `${proposerName} offers $${terms.amount} FAAB for ${terms.player}${terms.dropClaim ? ' if the other team drops its claim' : ''}.`;
 }
 
+const leagueDirectoryCache = new Map();
+
+function canonicalTeamName(value, teamId) {
+    const cleaned = cleanText(value == null ? '' : String(value), 60);
+    return cleaned || `Team ${teamId}`;
+}
+
+async function loadLeagueDirectory(leagueId) {
+    const cached = leagueDirectoryCache.get(leagueId);
+    const nowMs = Date.now();
+    if (cached && nowMs - cached.at < 60 * 1000) return cached.directory;
+    let rosters;
+    let users;
+    try {
+        const timeout = AbortSignal.timeout(5000);
+        const [rostersResponse, usersResponse] = await Promise.all([
+            fetch(`https://api.sleeper.app/v1/league/${leagueId}/rosters`, { signal: timeout }),
+            fetch(`https://api.sleeper.app/v1/league/${leagueId}/users`, { signal: timeout })
+        ]);
+        if (!rostersResponse.ok || !usersResponse.ok) {
+            throw new DeskError('not_found', 'That league could not be verified.', 404);
+        }
+        rosters = await rostersResponse.json();
+        users = await usersResponse.json();
+    } catch (error) {
+        if (error instanceof DeskError) throw error;
+        throw new DeskError('not_found', 'That league could not be verified.', 404);
+    }
+    if (!Array.isArray(rosters) || !Array.isArray(users)) {
+        throw new DeskError('not_found', 'That league could not be verified.', 404);
+    }
+    const directory = {};
+    rosters.forEach((roster) => {
+        if (!roster || roster.roster_id == null) return;
+        const user = users.find((item) => item && item.user_id === roster.owner_id);
+        directory[String(roster.roster_id)] = {
+            teamName: canonicalTeamName(user && user.display_name, roster.roster_id),
+            ownerId: roster.owner_id || null
+        };
+    });
+    leagueDirectoryCache.set(leagueId, { at: nowMs, directory });
+    return directory;
+}
+
 function createDesk(options = {}) {
     const now = options.now || (() => new Date());
     const notify = options.notify || (async () => {});
     const persistPath = options.persistPath || null;
-    const leagueCode = options.leagueCode == null ? null : String(options.leagueCode);
+    const leagueCode = options.leagueCode == null || options.leagueCode === '' ? null : String(options.leagueCode);
+    const secretKey = secretKeyFrom(options.secretKey);
+    const lookup = options.lookup || dns.promises.lookup;
     const state = { agents: {}, tasks: {} };
 
     if (persistPath) {
         loadState(persistPath, state);
+        if (migrateWebhookSecrets(state, secretKey)) persist();
     }
 
     function iso() {
@@ -184,20 +347,62 @@ function createDesk(options = {}) {
 
     function persist() {
         if (!persistPath) return;
-        fs.mkdirSync(path.dirname(persistPath), { recursive: true });
+        fs.mkdirSync(path.dirname(persistPath), { recursive: true, mode: 0o700 });
         const tmp = `${persistPath}.tmp`;
-        fs.writeFileSync(tmp, JSON.stringify(state));
+        fs.writeFileSync(tmp, JSON.stringify(state), { mode: 0o600 });
         fs.renameSync(tmp, persistPath);
+        try {
+            fs.chmodSync(persistPath, 0o600);
+        } catch (error) {
+            // Some platforms cannot chmod the store. The secret is still encrypted.
+        }
     }
 
     function assertLeagueCode(header) {
-        if (!leagueCode) return;
+        if (!leagueCode) {
+            throw new DeskError('unauthorized', 'Registration is closed until a league code is configured.', 401);
+        }
         const provided = header == null ? '' : String(header);
         const a = hashToken(provided);
         const b = hashToken(leagueCode);
         if (!safeEqualHex(a, b)) {
             throw new DeskError('unauthorized', 'League code is incorrect.', 401);
         }
+    }
+
+    async function resolveRoster(leagueId, teamId) {
+        if (options.rosters) {
+            const league = options.rosters[leagueId];
+            const team = league && league[teamId];
+            if (!team) {
+                throw new DeskError('not_found', 'That team is not in this league.', 404);
+            }
+            return {
+                teamName: canonicalTeamName(team.teamName, teamId),
+                ownerId: team.ownerId || null
+            };
+        }
+        if (typeof options.resolveRoster === 'function') {
+            const team = await options.resolveRoster(leagueId, teamId);
+            if (!team) {
+                throw new DeskError('not_found', 'That team is not in this league.', 404);
+            }
+            return {
+                teamName: canonicalTeamName(team.teamName, teamId),
+                ownerId: team.ownerId || null
+            };
+        }
+        const directory = await loadLeagueDirectory(leagueId);
+        const team = directory[teamId];
+        if (!team) {
+            throw new DeskError('not_found', 'That team is not in this league.', 404);
+        }
+        return team;
+    }
+
+    function webhookSecretFrom(body) {
+        if (!body || body.webhookSecret == null || body.webhookSecret === '') return null;
+        return cleanText(body.webhookSecret, 200, { required: true, field: 'webhookSecret' });
     }
 
     function authenticate(token) {
@@ -363,8 +568,21 @@ function createDesk(options = {}) {
                 kind: task.kind,
                 summary: task.currentOffer.summary
             };
+            let webhookSecret = null;
+            if (agent.webhookSecretEnc) {
+                try {
+                    webhookSecret = decryptSecret(agent.webhookSecretEnc, secretKey);
+                } catch (error) {
+                    agent.lastWebhookError = 'Webhook secret could not be decrypted.';
+                    return;
+                }
+            }
             try {
-                await notify(agent, event);
+                await notify({
+                    webhookUrl: agent.webhookUrl,
+                    webhookSecret,
+                    lookup
+                }, event);
                 agent.lastWebhookError = null;
             } catch (error) {
                 agent.lastWebhookError = cleanText(error.message || 'webhook failed', 200);
@@ -425,28 +643,47 @@ function createDesk(options = {}) {
             };
         },
 
-        registerAgent(input, meta = {}) {
-            assertLeagueCode(meta.leagueCode);
+        async registerAgent(input, meta = {}) {
             const body = input || {};
             const teamId = cleanId(body.teamId, 'teamId');
-            const teamName = cleanText(body.teamName, 60, { required: true, field: 'teamName' });
             const leagueId = cleanId(body.leagueId, 'leagueId');
             const name = cleanText(body.name, 80, { required: true, field: 'name' });
-            const description = cleanText(
-                body.description,
-                280
-            ) || `${teamName} agent for trades, waiver priority, and FAAB.`;
-            const webhookUrl = assertWebhookUrl(body.webhookUrl);
-            let webhookSecret = null;
-            if (body.webhookSecret != null && body.webhookSecret !== '') {
-                webhookSecret = cleanText(body.webhookSecret, 200, { required: true, field: 'webhookSecret' });
-            }
-
+            const roster = await resolveRoster(leagueId, teamId);
+            const teamName = roster.teamName;
+            const description = cleanText(body.description, 280)
+                || `${teamName} agent for trades, waiver priority, and FAAB.`;
             const existing = activeAgentForTeam(leagueId, teamId);
             if (existing) {
-                existing.revokedAt = iso();
+                const auth = authenticate(meta.bearerToken);
+                if (!auth || auth.role !== 'owner' || auth.agent.id !== existing.id) {
+                    throw new DeskError(
+                        'forbidden',
+                        'An existing agent can only be replaced by that team owner.',
+                        403
+                    );
+                }
+                const webhookUrl = await assertWebhookUrl(body.webhookUrl, lookup);
+                const webhookSecret = webhookSecretFrom(body);
+                const agentToken = createToken();
+                existing.name = name;
+                existing.description = description;
+                existing.teamName = teamName;
+                existing.webhookUrl = webhookUrl;
+                existing.webhookSecretEnc = webhookSecret ? encryptSecret(webhookSecret, secretKey) : null;
+                delete existing.webhookSecret;
+                existing.agentTokenHash = hashToken(agentToken);
+                existing.lastWebhookError = null;
+                persist();
+                return {
+                    agent: publicCard(existing, meta.baseUrl),
+                    agentToken,
+                    ownerToken: null
+                };
             }
 
+            assertLeagueCode(meta.leagueCode);
+            const webhookUrl = await assertWebhookUrl(body.webhookUrl, lookup);
+            const webhookSecret = webhookSecretFrom(body);
             const agentToken = createToken();
             const ownerToken = createToken();
             const agent = {
@@ -457,7 +694,7 @@ function createDesk(options = {}) {
                 name,
                 description,
                 webhookUrl,
-                webhookSecret,
+                webhookSecretEnc: webhookSecret ? encryptSecret(webhookSecret, secretKey) : null,
                 agentTokenHash: hashToken(agentToken),
                 ownerTokenHash: hashToken(ownerToken),
                 createdAt: iso(),
@@ -804,11 +1041,27 @@ function loadState(persistPath, state) {
     }
 }
 
+function migrateWebhookSecrets(state, secretKey) {
+    let dirty = false;
+    Object.values(state.agents).forEach((agent) => {
+        if (typeof agent.webhookSecret === 'string' && agent.webhookSecret) {
+            agent.webhookSecretEnc = encryptSecret(agent.webhookSecret, secretKey);
+            dirty = true;
+        }
+        if (Object.prototype.hasOwnProperty.call(agent, 'webhookSecret')) {
+            delete agent.webhookSecret;
+            dirty = true;
+        }
+    });
+    return dirty;
+}
+
 module.exports = {
     CLOSED_STATES,
     DeskError,
     EXECUTION,
     KINDS,
+    assertWebhookUrl,
     createDesk,
     hashToken,
     validateTerms

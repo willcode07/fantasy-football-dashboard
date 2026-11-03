@@ -11,17 +11,18 @@ class A2AClient {
         this.token = token || null;
     }
 
-    static async register({ baseUrl, leagueCode, ...body }) {
+    static async register({ baseUrl, leagueCode, token, ...body }) {
         const data = await request(baseUrl, 'POST', '/api/a2a/agents', {
             body,
-            leagueCode
+            leagueCode,
+            token
         });
         return {
             agent: data.agent,
             agentToken: data.agentToken,
-            ownerToken: data.ownerToken,
+            ownerToken: data.ownerToken || null,
             client: new A2AClient({ baseUrl, token: data.agentToken }),
-            owner: new A2AClient({ baseUrl, token: data.ownerToken })
+            owner: data.ownerToken ? new A2AClient({ baseUrl, token: data.ownerToken }) : null
         };
     }
 

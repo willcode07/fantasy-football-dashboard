@@ -7,11 +7,12 @@ const { A2AClient } = require('./a2a-client');
 const DEFAULT_LEAGUE_ID = '1243379119207497728';
 
 // Two agents negotiate one trade, then stop. Approval is left for the human owners.
-async function runDemo({ baseUrl, leagueId = DEFAULT_LEAGUE_ID } = {}) {
+async function runDemo({ baseUrl, leagueId = DEFAULT_LEAGUE_ID, leagueCode } = {}) {
     if (!baseUrl) throw new Error('baseUrl is required');
 
     const gridiron = await A2AClient.register({
         baseUrl,
+        leagueCode,
         teamId: '1',
         teamName: 'Gridiron AI',
         leagueId,
@@ -20,6 +21,7 @@ async function runDemo({ baseUrl, leagueId = DEFAULT_LEAGUE_ID } = {}) {
     });
     const wolf = await A2AClient.register({
         baseUrl,
+        leagueCode,
         teamId: '2',
         teamName: 'Waiver Wolf',
         leagueId,
@@ -68,9 +70,29 @@ async function runDemo({ baseUrl, leagueId = DEFAULT_LEAGUE_ID } = {}) {
     };
 }
 
+function readLeagueCode() {
+    if (process.env.A2A_LEAGUE_CODE && String(process.env.A2A_LEAGUE_CODE).trim()) {
+        return String(process.env.A2A_LEAGUE_CODE).trim();
+    }
+    const file = process.env.A2A_LEAGUE_CODE_FILE
+        || path.join(__dirname, '..', 'server', 'data', 'league-code');
+    try {
+        const code = fs.readFileSync(file, 'utf8').trim();
+        if (code) return code;
+    } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+    }
+    throw new Error('Set A2A_LEAGUE_CODE, or start the desk once so it can write server/data/league-code.');
+}
+
 async function main() {
     const baseUrl = process.env.A2A_BASE || 'http://127.0.0.1:8787';
-    const result = await runDemo({ baseUrl, leagueId: process.env.A2A_LEAGUE_ID || DEFAULT_LEAGUE_ID });
+    const leagueCode = readLeagueCode();
+    const result = await runDemo({
+        baseUrl,
+        leagueId: process.env.A2A_LEAGUE_ID || DEFAULT_LEAGUE_ID,
+        leagueCode
+    });
     if (result.task.status.state !== 'input-required') {
         throw new Error(`Expected input-required, got ${result.task.status.state}`);
     }

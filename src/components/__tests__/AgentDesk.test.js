@@ -128,6 +128,7 @@ describe('AgentDesk', () => {
         await screen.findByText(/desk connected/i);
 
         fireEvent.change(screen.getByLabelText('League team'), { target: { value: '4' } });
+        fireEvent.change(screen.getByLabelText('League code'), { target: { value: 'sesame' } });
         expect(screen.getByLabelText('Team name')).toHaveValue('Bench Mob');
         fireEvent.click(screen.getByRole('button', { name: 'Connect agent' }));
 
@@ -136,7 +137,54 @@ describe('AgentDesk', () => {
         expect(axios.post).toHaveBeenCalledWith(
             '/api/a2a/agents',
             expect.objectContaining({ teamId: '4', teamName: 'Bench Mob', leagueId: 'league-1' }),
-            expect.any(Object)
+            expect.objectContaining({
+                headers: { 'X-League-Code': 'sesame' }
+            })
+        );
+    });
+
+    test('sends the saved owner token when replacing that team agent', async () => {
+        loadSessions.mockReturnValue([{
+            ...session,
+            teamId: '4',
+            teamName: 'Bench Mob',
+            agentId: 'agent_4'
+        }]);
+        mockOnline();
+        axios.post.mockResolvedValue({
+            data: {
+                agentToken: 'replacement-agent-token',
+                ownerToken: null,
+                agent: {
+                    name: 'Bench Mob Agent',
+                    metadata: {
+                        agentId: 'agent_4',
+                        teamId: '4',
+                        teamName: 'Bench Mob',
+                        leagueId: 'league-1'
+                    }
+                }
+            }
+        });
+
+        render(<AgentDesk leagueId="league-1" leagueType="redraft" teamNames={{ 4: 'Bench Mob' }} />);
+        await screen.findByText(/desk connected/i);
+        fireEvent.change(screen.getByLabelText('League team'), { target: { value: '4' } });
+        fireEvent.change(screen.getByLabelText('League code'), { target: { value: 'sesame' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Connect agent' }));
+
+        expect(await screen.findByLabelText('Issued agent token')).toHaveValue('replacement-agent-token');
+        expect(screen.queryByLabelText('Issued owner token')).not.toBeInTheDocument();
+        expect(screen.getByText(/owner token already saved/i)).toBeInTheDocument();
+        expect(axios.post).toHaveBeenCalledWith(
+            '/api/a2a/agents',
+            expect.objectContaining({ teamId: '4', leagueId: 'league-1' }),
+            expect.objectContaining({
+                headers: {
+                    Authorization: 'Bearer owner-token-1',
+                    'X-League-Code': 'sesame'
+                }
+            })
         );
     });
 

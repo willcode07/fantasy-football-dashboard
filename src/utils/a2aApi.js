@@ -39,8 +39,13 @@ export function listAgents(leagueId) {
     }));
 }
 
-export function registerAgent(body) {
-    return unwrap(axios.post(`${a2aBase()}/api/a2a/agents`, body, { timeout: 8000 }));
+export function registerAgent(body, { token, leagueCode } = {}) {
+    const headers = { ...authHeaders(token) };
+    if (leagueCode) headers['X-League-Code'] = leagueCode;
+    return unwrap(axios.post(`${a2aBase()}/api/a2a/agents`, body, {
+        headers,
+        timeout: 8000
+    }));
 }
 
 export function getMe(token) {
