@@ -186,7 +186,7 @@ describe('FantasyDashboard', () => {
             expect(urls.some((url) => url.includes('/rosters'))).toBe(true);
             expect(urls.some((url) => url.includes('/users'))).toBe(true);
             expect(urls.some((url) => url.includes('/matchups/3'))).toBe(true);
-            // A live 2025 season stops at the current week. It does not walk the full slate.
+            // A live 2026 season stops at the current week. It does not walk the full slate.
             expect(urls.some((url) => url.includes('/matchups/17'))).toBe(false);
             expect(mockedAxios.get.mock.calls.length).toBeLessThanOrEqual(20);
         });

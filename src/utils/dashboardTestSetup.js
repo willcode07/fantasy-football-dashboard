@@ -1,14 +1,14 @@
 // Shared setup for dashboard tests.
 // The app treats the calendar year as the live season and probes Sleeper week by
 // week before it loads rosters. These helpers keep that behavior deterministic:
-// the clock stays on 15 Oct 2025, and axios answers by URL instead of call order.
+// the clock stays on 15 Oct 2026, and axios answers by URL instead of call order.
 
 import { screen, within } from '@testing-library/react';
 import axios from 'axios';
 import { createMockMatchupData, createMockRosterData, createMockUserData } from './testHelpers';
 
 const RealDate = Date;
-export const DASHBOARD_NOW = new RealDate('2025-10-15T16:00:00.000Z');
+export const DASHBOARD_NOW = new RealDate('2026-10-15T16:00:00.000Z');
 
 export const defaultRosters = createMockRosterData();
 export const defaultUsers = createMockUserData();
@@ -30,10 +30,11 @@ export function restoreDashboardNow() {
     global.Date = RealDate;
 }
 
-export function mockDashboardStorage({ season = '2025', leagueType = 'redraft', cache = null } = {}) {
+export function mockDashboardStorage({ season = '2026', leagueType = 'redraft', cache = null } = {}) {
     const cacheKey = `fantasy_${leagueType}_${season}`;
     localStorage.getItem.mockImplementation((key) => {
         if (key === 'selectedSeason') return season;
+        if (key === 'seasonDefaultVersion') return '2026';
         if (key === 'leagueType') return leagueType;
         if (key === cacheKey) return cache;
         return null;

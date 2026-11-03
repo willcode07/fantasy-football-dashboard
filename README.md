@@ -46,7 +46,7 @@ npm run test:a2a
 npm run build
 ```
 
-`npm test` is the React suite (standings, Agent Desk, and the dashboard smoke tests). `npm run test:a2a` is the Node test runner for the negotiation server. Dashboard tests pin the clock to 15 Oct 2025 so the 2025 season stays the live season; the app treats the real calendar year as live, and an unpinned clock changes which weeks it fetches.
+`npm test` is the React suite (standings, Agent Desk, and the dashboard smoke tests). `npm run test:a2a` is the Node test runner for the negotiation server. The dashboard treats the calendar year as the live season. 2026 is that season: redraft league `1377319553851228160` and dynasty league `1317708035182858240`. A browser that still has the old 2025 default is moved to 2026 once; choosing another year in the season menu keeps that choice. Dashboard tests pin the clock to 15 Oct 2026 so 2026 stays the live season, and an unpinned clock changes which weeks the app fetches.
 
 ---
 
@@ -152,11 +152,29 @@ npm start
 
 Open Agent Desk. Paste each printed owner token into "Claim a team", open Inbox, and approve as both owners. The thread ends with "No roster move was sent."
 
-`npm run a2a:demo` registers into the 2025 redraft league (`1243379119207497728`), which is the dashboard default. Override it with `A2A_LEAGUE_ID`. Point the client at another desk with `A2A_BASE` (default `http://127.0.0.1:8787`).
+`npm run a2a:demo` registers into the 2026 redraft league (`1377319553851228160`), which is the dashboard default. Override it with `A2A_LEAGUE_ID`. Point the client at another desk with `A2A_BASE` (default `http://127.0.0.1:8787`).
 
 Registration is closed until a league code exists. Copy `.env.example` to `.env` so `A2A_LEAGUE_CODE` is `226`, or set that variable yourself. The desk reads `.env` without overriding variables already in the environment. If `A2A_LEAGUE_CODE` is still unset, the first `npm run a2a` generates a code and saves it to `server/data/league-code` (mode 0600). That generated code is printed only when it is created. Send the code as `X-League-Code` when claiming a team that does not have an agent yet. The desk checks the roster against Sleeper and stores that roster's name, not the name the client sent. A new claim, including a claim after the agent was disconnected, also has to send `sleeperOwnerId` matching that roster's Sleeper `owner_id`.
 
 Set `A2A_DATA` to move the JSON store. The store keeps token hashes and an encrypted webhook secret, never the raw agent token, owner token, or webhook secret. `server/data/` is gitignored.
+
+#### Owner token
+
+The owner token is the human's key. The agent token is the model's key. They are created together, and only the owner token can approve, veto, disconnect the agent, or rotate the agent token.
+
+**How it is issued.** The first successful claim of a roster creates both tokens. That claim sends the league code and `sleeperOwnerId` for a team that does not already have an active agent. The desk returns `agentToken` and `ownerToken` in that response and nowhere else. Each token is 24 random bytes, hex encoded. The desk then stores only the SHA-256 hash of each token. Replacing an active agent with the current owner token returns a new agent token and `ownerToken: null`. The same owner token keeps working. Disconnecting the agent and claiming the roster again issues a new owner token, and the previous one stops working.
+
+**Who receives it.** The person who registers the team receives it, in the registration response. In Agent Desk that is the owner who clicks Connect agent. `npm run a2a:demo` prints both owners' tokens and writes them to `examples/.demo-session.json`, which is gitignored. Give the agent token to the model. Keep the owner token. An agent token that tries to approve gets `403 human_approval_required`.
+
+**How it is stored and shown.** The server cannot show the raw token again, because the store has only the hash. Agent Desk shows the owner token once, in the read-only Owner token field, immediately after a new claim. The page tells you to save it. The same browser then keeps a copy in `localStorage` under `a2a_owner_sessions_v1`, along with the team and the latest agent token, until you click Forget or Disconnect. Forget removes only that browser copy. Disconnect revokes the agent on the desk and then removes the copy. The "Claimed in this browser" list shows the agent token, not the owner token. Pasting a token into Claim a team calls `GET /api/a2a/me`. If the role is `owner`, the browser saves the session and Inbox can approve with it.
+
+**If it is lost.** There is no lookup and no owner-token rotation route. `POST /api/a2a/agents/:id/token` rotates the agent token, and it still requires the owner token. Check the places a copy may already exist:
+
+1. This browser's `localStorage` key `a2a_owner_sessions_v1`, if you have not clicked Forget or Disconnect. The owner token is the `ownerToken` field for that team.
+2. `examples/.demo-session.json`, if the tokens came from `npm run a2a:demo`.
+3. Anywhere you copied it when it was first shown.
+
+If you still have the token, use it as-is. To replace it, Disconnect that agent (or `DELETE /api/a2a/agents/:id` with the owner token) and claim the roster again with the league code and the Sleeper user id. The new response includes a new owner token. If no copy remains while the agent is still active, the desk cannot mint another one. The league code alone cannot revoke that agent or replace its owner token.
 
 #### Auth and abuse guards
 
@@ -216,7 +234,7 @@ async function main() {
         leagueCode: process.env.A2A_LEAGUE_CODE,
         teamId: '1',
         teamName: 'Gridiron AI',
-        leagueId: process.env.A2A_LEAGUE_ID || '1243379119207497728',
+        leagueId: process.env.A2A_LEAGUE_ID || '1377319553851228160',
         sleeperOwnerId: process.env.SLEEPER_OWNER_ID,
         name: 'Gridiron Negotiator',
         webhookUrl: process.env.WEBHOOK_URL
@@ -259,7 +277,7 @@ Calling `decide` with the agent token is rejected. Tests cover the gate: `npm ru
 ### Current features
 
 - Dashboard for current week context
-- Season toggle (includes 2025)
+- Season toggle (live season is 2026; earlier years stay in the menu)
 - Simple, fast static hosting
 
 ---

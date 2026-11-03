@@ -26,6 +26,8 @@ describe('Dashboard smoke', () => {
         render(<FantasyDashboard />);
 
         expect(await screen.findByRole('heading', { name: /fantasy football mnps dashboard/i })).toBeInTheDocument();
+        expect(screen.getByRole('combobox', { name: /select season/i })).toHaveValue('2026');
+        expect(axios.get.mock.calls.some((call) => String(call[0]).includes('/league/1377319553851228160/'))).toBe(true);
         expect(await screen.findByRole('columnheader', { name: /Week 1/ })).toBeInTheDocument();
         expect(screen.getByRole('columnheader', { name: /Week 3 \(Current\)/ })).toBeInTheDocument();
         expect(screen.getByRole('columnheader', { name: /Top 6s/ })).toBeInTheDocument();
@@ -51,10 +53,10 @@ describe('Dashboard smoke', () => {
 
         render(<FantasyDashboard />);
 
-        expect(await screen.findByText(/Loading 2025 season data/)).toBeInTheDocument();
+        expect(await screen.findByText(/Loading 2026 season data/)).toBeInTheDocument();
         releaseRosters();
         expect(teamRow(await findSeasonTable(), 'Team 1')).toBeTruthy();
-        expect(screen.queryByText(/Loading 2025 season data/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Loading 2026 season data/)).not.toBeInTheDocument();
     });
 
     test('shows an error when the season request fails', async () => {
@@ -65,6 +67,22 @@ describe('Dashboard smoke', () => {
         expect((await screen.findAllByText('Failed to load data. Please try again later.')).length).toBeGreaterThan(0);
         expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
         expect(screen.queryByRole('columnheader', { name: /Top 6s/ })).not.toBeInTheDocument();
+    });
+
+    test('opens 2026 when the browser still has the old 2025 default', async () => {
+        localStorage.getItem.mockImplementation((key) => {
+            if (key === 'selectedSeason') return '2025';
+            if (key === 'leagueType') return 'redraft';
+            return null;
+        });
+        mockSleeperApi();
+
+        render(<FantasyDashboard />);
+
+        expect(await screen.findByRole('combobox', { name: /select season/i })).toHaveValue('2026');
+        expect(localStorage.setItem).toHaveBeenCalledWith('seasonDefaultVersion', '2026');
+        expect(localStorage.setItem).toHaveBeenCalledWith('selectedSeason', '2026');
+        expect(screen.queryByText(/Loading 2025 season data/)).not.toBeInTheDocument();
     });
 
     test('loads a completed season without starting the live refresh timer', async () => {

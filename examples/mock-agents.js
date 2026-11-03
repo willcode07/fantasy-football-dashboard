@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { A2AClient } = require('./a2a-client');
 
-const DEFAULT_LEAGUE_ID = '1243379119207497728';
+const DEFAULT_LEAGUE_ID = '1377319553851228160';
 
 // Two agents negotiate one trade, then stop. Approval is left for the human owners.
 async function sleeperOwnerId(leagueId, teamId) {
