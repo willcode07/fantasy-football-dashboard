@@ -1,15 +1,12 @@
 import React from 'react';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import axios from 'axios';
 import FantasyDashboard from '../FantasyDashboard';
 import { 
-  createMockMatchupData, 
-  createMockRosterData, 
+  createMockMatchupData,
+  createMockRosterData,
   createMockUserData,
-  validateTop6Logic,
-  validateCurrentWeekDisplay,
-  validateAutoRefresh,
   createFullWeekScenario
 } from '../../utils/testHelpers';
 
@@ -109,11 +106,12 @@ describe('Live Data Integration Tests', () => {
       const matchupData = createMockMatchupData(1, top6Scores, bottom6Scores);
       
       // Validate the top 6 logic
-      const validation = validateTop6Logic(matchupData.data, false);
-      
-      expect(validation.isValid).toBe(true);
-      expect(validation.errors).toHaveLength(0);
-      expect(validation.actualTopTeams).toHaveLength(6);
+      const topTeams = [...matchupData.data]
+        .sort((a, b) => b.points - a.points)
+        .slice(0, 6)
+        .map((team) => team.roster_id);
+
+      expect(topTeams).toEqual([1, 2, 3, 4, 5, 6]);
     });
 
     it('should handle edge cases in score distribution', async () => {
@@ -125,10 +123,12 @@ describe('Live Data Integration Tests', () => {
       const matchupData = createMockMatchupData(1, top6Scores, bottom6Scores);
       
       // Should still correctly identify top 6 (first 6 teams due to array order)
-      const validation = validateTop6Logic(matchupData.data, false);
-      
-      expect(validation.isValid).toBe(true);
-      expect(validation.actualTopTeams).toEqual([1, 2, 3, 4, 5, 6]);
+      const topTeams = [...matchupData.data]
+        .sort((a, b) => b.points - a.points)
+        .slice(0, 6)
+        .map((team) => team.roster_id);
+
+      expect(topTeams).toEqual([1, 2, 3, 4, 5, 6]);
     });
 
     it('should handle very low scores', async () => {
@@ -139,10 +139,12 @@ describe('Live Data Integration Tests', () => {
 
       const matchupData = createMockMatchupData(1, top6Scores, bottom6Scores);
       
-      const validation = validateTop6Logic(matchupData.data, false);
-      
-      expect(validation.isValid).toBe(true);
-      expect(validation.actualTopTeams).toEqual([1, 2, 3, 4, 5, 6]);
+      const topTeams = [...matchupData.data]
+        .sort((a, b) => b.points - a.points)
+        .slice(0, 6)
+        .map((team) => team.roster_id);
+
+      expect(topTeams).toEqual([1, 2, 3, 4, 5, 6]);
     });
   });
 
@@ -177,12 +179,14 @@ describe('Live Data Integration Tests', () => {
     });
 
     it('should handle API failures gracefully during refresh', async () => {
-      // First call succeeds, subsequent calls fail
-      mockedAxios.get
-        .mockResolvedValueOnce(createMockRosterData())
-        .mockResolvedValueOnce(createMockUserData())
-        .mockResolvedValueOnce(createMockMatchupData(1, [100, 90, 80, 70, 60, 50], [40, 35, 30, 25, 20, 15]))
-        .mockRejectedValue(new Error('API Error'));
+      mockedAxios.get.mockImplementation((url) => {
+        if (url.includes('/rosters')) return Promise.resolve(createMockRosterData());
+        if (url.includes('/users')) return Promise.resolve(createMockUserData());
+        if (url.includes('/matchups/1')) {
+          return Promise.resolve(createMockMatchupData(1, [100, 90, 80, 70, 60, 50], [40, 35, 30, 25, 20, 15]));
+        }
+        return Promise.reject(new Error('API Error'));
+      });
 
       render(<FantasyDashboard />);
 
@@ -215,7 +219,8 @@ describe('Live Data Integration Tests', () => {
       const apiCalls = mockedAxios.get.mock.calls;
       const uniqueEndpoints = new Set(apiCalls.map(call => call[0]));
       
-      expect(uniqueEndpoints.size).toBeLessThanOrEqual(3); // rosters, users, matchups
+      expect(uniqueEndpoints.size).toBeLessThanOrEqual(4); // rosters, users, scored week, one probe past it
+      expect([...uniqueEndpoints].some((url) => url.includes('/stats/'))).toBe(false);
     });
 
     it('should cache data appropriately', async () => {
@@ -232,16 +237,13 @@ describe('Live Data Integration Tests', () => {
       render(<FantasyDashboard />);
 
       await waitFor(() => {
-        expect(screen.getByText(/Fantasy Football MNPS Dashboard/)).toBeInTheDocument();
+        expect(global.localStorage.setItem).toHaveBeenCalled();
       });
-
-      // Should have cached the data
-      expect(localStorageMock.setItem).toHaveBeenCalled();
       
       // Verify cache key format
-      const setItemCalls = localStorageMock.setItem.mock.calls;
+      const setItemCalls = global.localStorage.setItem.mock.calls;
       const cacheKey = setItemCalls[0][0];
-      expect(cacheKey).toMatch(/^fantasy_(redraft|dynasty)_\d{4}$/);
+      expect(cacheKey).toMatch(/^fantasy_v3_(redraft|dynasty)_\d{4}$/);
     });
   });
 
@@ -260,10 +262,11 @@ describe('Live Data Integration Tests', () => {
       render(<FantasyDashboard />);
 
       await waitFor(() => {
-        expect(screen.getByText(/Fantasy Football MNPS Dashboard/)).toBeInTheDocument();
+        expect(screen.getByText(/Top 6s/)).toBeInTheDocument();
       });
 
-      // Should show "Top 5s" for dynasty league
+      fireEvent.click(screen.getByRole('button', { name: 'Dynasty' }));
+
       await waitFor(() => {
         expect(screen.getByText(/Top 5s/)).toBeInTheDocument();
       });

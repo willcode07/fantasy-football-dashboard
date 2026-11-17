@@ -2,10 +2,17 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './FantasyDashboard.css';
+import {
+    applyAutoSubs,
+    fetchAutoSubsByWeek,
+    fetchPlayerNames,
+    weekNeedsPlayedCheck
+} from '../utils/autoSubs';
 
 // Stable league IDs mapping for each season and league type
 const LEAGUE_IDS = {
     redraft: {
+        '2026': '1377319553851228160',
         '2025': '1243379119207497728',
         '2024': '1094759154738130944',
         '2023': '974055073460396032',
@@ -16,6 +23,7 @@ const LEAGUE_IDS = {
         '2018': '329722904092631040'
     },
     dynasty: {
+        '2026': '1317708035182858240',
         '2025': '1183127627483684864',
         '2024': '1183127627483684864',
         '2023': '1183127627483684864',
@@ -27,9 +35,34 @@ const LEAGUE_IDS = {
     }
 };
 
+// v3 ignores totals cached before applied auto-subs were added to the team score.
+function cacheKey(leagueType, season) {
+    return `fantasy_v3_${leagueType}_${season}`;
+}
+
+async function attachAutoSubNames(seasonData) {
+    const playerIds = new Set();
+    seasonData.forEach((entry) => {
+        (entry.appliedSubs || []).forEach((sub) => {
+            playerIds.add(sub.starterId);
+            playerIds.add(sub.subId);
+        });
+    });
+    if (playerIds.size === 0) {
+        return;
+    }
+    const names = await fetchPlayerNames(playerIds);
+    seasonData.forEach((entry) => {
+        (entry.appliedSubs || []).forEach((sub) => {
+            sub.starterName = names[sub.starterId] || sub.starterId;
+            sub.subName = names[sub.subId] || sub.subId;
+        });
+    });
+}
+
 function FantasyDashboard() {
     const [selectedSeason, setSelectedSeason] = useState(() => {
-        return localStorage.getItem('selectedSeason') || '2025';
+        return localStorage.getItem('selectedSeason') || '2026';
     });
 
     const [leagueType, setLeagueType] = useState(() => {
@@ -144,7 +177,7 @@ function FantasyDashboard() {
 
     // Load cached data immediately
     useEffect(() => {
-        const cachedData = localStorage.getItem(`fantasy_${leagueType}_${selectedSeason}`);
+        const cachedData = localStorage.getItem(cacheKey(leagueType, selectedSeason));
         if (cachedData) {
             const parsed = JSON.parse(cachedData);
             const cachedSeasonData = parsed.seasonData || [];
@@ -166,11 +199,11 @@ function FantasyDashboard() {
         setLeagueId(LEAGUE_IDS[leagueType][selectedSeason]);
     }, [selectedSeason, leagueType]);
 
-    // Auto-switch to 2025 when Dynasty is selected and current season is not 2025
+    // Dynasty seasons with their own league are 2025 and 2026. Older years share no separate dynasty league.
     useEffect(() => {
-        if (leagueType === 'dynasty' && selectedSeason !== '2025') {
-            setSelectedSeason('2025');
-            localStorage.setItem('selectedSeason', '2025');
+        if (leagueType === 'dynasty' && selectedSeason !== '2026' && selectedSeason !== '2025') {
+            setSelectedSeason('2026');
+            localStorage.setItem('selectedSeason', '2026');
         }
     }, [leagueType, selectedSeason]);
 
@@ -223,16 +256,55 @@ function FantasyDashboard() {
                         )
                     );
 
+                    let subsByWeek = {};
+                    try {
+                        subsByWeek = await fetchAutoSubsByWeek(leagueId, batchWeeks);
+                    } catch (subsError) {
+                        console.warn('Failed to load auto-sub pairings', subsError);
+                    }
+
+                    const statsByWeek = {};
+                    for (let responseIndex = 0; responseIndex < responses.length; responseIndex += 1) {
+                        const week = batchWeeks[responseIndex];
+                        const matchups = responses[responseIndex].data;
+                        if (!weekNeedsPlayedCheck(matchups, subsByWeek[week])) {
+                            continue;
+                        }
+                        try {
+                            const statsResponse = await axios.get(
+                                `https://api.sleeper.app/v1/stats/nfl/regular/${selectedSeason}/${week}`,
+                                { timeout: 8000 }
+                            );
+                            statsByWeek[week] = statsResponse.data || {};
+                        } catch (statsError) {
+                            console.warn(`Failed to load week ${week} stats for auto-subs`, statsError);
+                            statsByWeek[week] = null;
+                        }
+                    }
+
                     responses.forEach((response, index) => {
                         const week = batchWeeks[index];
                         const matchups = response.data;
 
                         // Only process weeks that have actual matchup data
                         if (matchups && matchups.length > 0) {
-                            const teamScores = matchups.map(matchup => ({
-                                roster_id: matchup.roster_id,
-                                points: matchup.points || 0
-                            }));
+                            const teamScores = matchups.map(matchup => {
+                                const rosterSubs = subsByWeek[week]?.[String(matchup.roster_id)];
+                                const stats = statsByWeek[week];
+                                if (!rosterSubs || !stats) {
+                                    return {
+                                        roster_id: matchup.roster_id,
+                                        points: matchup.points || 0,
+                                        appliedSubs: []
+                                    };
+                                }
+                                const adjusted = applyAutoSubs(matchup, rosterSubs, stats);
+                                return {
+                                    roster_id: matchup.roster_id,
+                                    points: adjusted.points,
+                                    appliedSubs: adjusted.appliedSubs
+                                };
+                            });
 
                             // Only calculate top teams and MNPS if we have valid scores
                             if (teamScores.length > 0) {
@@ -241,10 +313,14 @@ function FantasyDashboard() {
                                 const topCount = leagueType === 'dynasty' ? 5 : 6;
                                 const topIds = sortedScores.slice(0, topCount).map(team => team.roster_id);
 
-                                const weekData = teamScores.map(({ roster_id, points }) => {
+                                const weekData = teamScores.map(({ roster_id, points, appliedSubs }) => {
                                     const isTop = topIds.includes(roster_id);
                                     const mnps = isTop ? 5 + (points * multiplier) : (points * multiplier);
-                                    return { week, roster_id: roster_id.toString(), points, mnps, isTop };
+                                    const entry = { week, roster_id: roster_id.toString(), points, mnps, isTop };
+                                    if (appliedSubs && appliedSubs.length > 0) {
+                                        entry.appliedSubs = appliedSubs;
+                                    }
+                                    return entry;
                                 });
 
                                 // Add week data, avoiding duplicates
@@ -270,8 +346,13 @@ function FantasyDashboard() {
                     await new Promise(resolve => setTimeout(resolve, 10));
                 }
 
-                // Cache the final data
-                localStorage.setItem(`fantasy_${leagueType}_${selectedSeason}`, JSON.stringify({
+                await attachAutoSubNames(processedData);
+                if (isMounted) {
+                    setSeasonData([...processedData]);
+                }
+
+                // Cache the final data. v3 drops totals that were saved before auto-subs were included.
+                localStorage.setItem(cacheKey(leagueType, selectedSeason), JSON.stringify({
                     teamNames: names,
                     seasonData: processedData,
                     timestamp: Date.now()
@@ -302,7 +383,7 @@ function FantasyDashboard() {
             setIsRefreshing(true);
             
             // Clear cache to force fresh data fetch
-            localStorage.removeItem(`fantasy_${leagueType}_${selectedSeason}`);
+            localStorage.removeItem(cacheKey(leagueType, selectedSeason));
             
             // Update current week if new week detected
             if (newWeek && newWeek > currentWeekNumber) {
@@ -593,7 +674,8 @@ function FantasyDashboard() {
             teamStats[rosterId].weeklyData[entry.week] = {
                 points: entry.points,
                 mnps: entry.mnps,
-                isTop: entry.isTop
+                isTop: entry.isTop,
+                appliedSubs: entry.appliedSubs || []
             };
             
             teamStats[rosterId].totalPoints += entry.points;
@@ -735,6 +817,7 @@ function FantasyDashboard() {
                             className="season-select"
                             disabled={loading && loadingProgress < 100}
                         >
+                            <option value="2026">2026 Season (0.0653)</option>
                             <option value="2025">2025 Season (0.0653)</option>
                             <option 
                                 value="2024" 
@@ -1032,6 +1115,15 @@ function FantasyDashboard() {
                                                                     <div className="points">
                                                                         {weekData.points.toFixed(2)}
                                                                     </div>
+                                                                    {weekData.appliedSubs?.map((sub) => (
+                                                                        <div
+                                                                            className="auto-sub"
+                                                                            key={`${sub.starterId}-${sub.subId}`}
+                                                                            title={`Subbed in for ${sub.starterName || sub.starterId}`}
+                                                                        >
+                                                                            {`${sub.subName || sub.subId} ${Number(sub.points).toFixed(2)}`}
+                                                                        </div>
+                                                                    ))}
                                                                     <div className="mnps">
                                                                         {weekData.mnps.toFixed(2)}
                                                                     </div>
