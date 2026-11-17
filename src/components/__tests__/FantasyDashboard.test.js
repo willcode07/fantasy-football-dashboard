@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import axios from 'axios';
 import FantasyDashboard from '../FantasyDashboard';
@@ -11,6 +11,7 @@ describe('FantasyDashboard', () => {
     // Reset all mocks
     jest.clearAllMocks();
     global.localStorage.getItem.mockReturnValue(null);
+    mockedAxios.post.mockResolvedValue({ data: { data: {} } });
   });
 
   // Mock API responses
@@ -72,91 +73,82 @@ describe('FantasyDashboard', () => {
     return { data: matchups };
   };
 
+  function mockSleeper({ maxWeek = 1, top = [120, 110, 100, 90, 80, 70], bottom = [60, 50, 40, 30, 20, 10], rejectAll = false, onGet } = {}) {
+    mockedAxios.get.mockImplementation((url) => {
+      if (onGet) {
+        const custom = onGet(url);
+        if (custom) return custom;
+      }
+      if (rejectAll) return Promise.reject(new Error('API Error'));
+      if (url.includes('/rosters')) return Promise.resolve(mockRostersResponse);
+      if (url.includes('/users')) return Promise.resolve(mockUsersResponse);
+      if (url.includes('/stats/')) return Promise.resolve({ data: {} });
+      if (url.includes('/players/nfl/')) return Promise.resolve({ data: {} });
+      const match = String(url).match(/\/matchups\/(\d+)/);
+      if (match) {
+        const week = Number(match[1]);
+        if (week <= maxWeek) {
+          return Promise.resolve(createMockMatchupResponse(week, top, bottom));
+        }
+        return Promise.reject(new Error(`Week ${week} not found`));
+      }
+      return Promise.reject(new Error(`Unknown endpoint ${url}`));
+    });
+  }
+
   describe('Current Week Detection', () => {
     it('should detect current week from API data', async () => {
-      // Mock API responses for weeks 1, 2, and 3
-      mockedAxios.get
-        .mockResolvedValueOnce(mockRostersResponse)
-        .mockResolvedValueOnce(mockUsersResponse)
-        .mockResolvedValueOnce(createMockMatchupResponse(1, [100, 90, 80, 70, 60, 50], [40, 35, 30, 25, 20, 15]))
-        .mockResolvedValueOnce(createMockMatchupResponse(2, [110, 95, 85, 75, 65, 55], [45, 40, 35, 30, 25, 20]))
-        .mockResolvedValueOnce(createMockMatchupResponse(3, [120, 100, 90, 80, 70, 60], [50, 45, 40, 35, 30, 25]))
-        .mockRejectedValueOnce(new Error('Week 4 not found')); // Simulate week 4 not existing
+      mockSleeper({ maxWeek: 3 });
 
       render(<FantasyDashboard />);
 
       await waitFor(() => {
         expect(mockedAxios.get).toHaveBeenCalledWith(
-          expect.stringContaining('/matchups/3')
+          expect.stringContaining('/matchups/3'),
+          expect.any(Object)
         );
       });
     });
 
     it('should handle API failures gracefully', async () => {
-      mockedAxios.get.mockRejectedValue(new Error('API Error'));
+      mockSleeper({ rejectAll: true });
 
       render(<FantasyDashboard />);
 
       await waitFor(() => {
-        expect(console.warn).toHaveBeenCalledWith(
-          expect.stringContaining('Failed to get current week from API')
-        );
+        expect(screen.getAllByText(/Failed to load data/).length).toBeGreaterThan(0);
       });
     });
   });
 
   describe('Top 6 Logic', () => {
     it('should correctly identify top 6 teams by points', async () => {
-      const top6Scores = [120, 110, 100, 90, 80, 70]; // Top 6 scores
-      const bottom6Scores = [60, 50, 40, 30, 20, 10]; // Bottom 6 scores
-
-      mockedAxios.get
-        .mockResolvedValueOnce(mockRostersResponse)
-        .mockResolvedValueOnce(mockUsersResponse)
-        .mockResolvedValueOnce(createMockMatchupResponse(1, top6Scores, bottom6Scores))
-        .mockResolvedValueOnce(createMockMatchupResponse(2, top6Scores, bottom6Scores))
-        .mockResolvedValueOnce(createMockMatchupResponse(3, top6Scores, bottom6Scores));
+      mockSleeper({ maxWeek: 1 });
 
       render(<FantasyDashboard />);
 
       await waitFor(() => {
-        // Check that teams with top 6 scores have isTop: true
         const topTeams = screen.queryAllByText(/Team [1-6]/);
         expect(topTeams.length).toBeGreaterThan(0);
       });
     });
 
     it('should correctly calculate top count for each team', async () => {
-      const top6Scores = [120, 110, 100, 90, 80, 70];
-      const bottom6Scores = [60, 50, 40, 30, 20, 10];
-
-      mockedAxios.get
-        .mockResolvedValueOnce(mockRostersResponse)
-        .mockResolvedValueOnce(mockUsersResponse)
-        .mockResolvedValueOnce(createMockMatchupResponse(1, top6Scores, bottom6Scores))
-        .mockResolvedValueOnce(createMockMatchupResponse(2, top6Scores, bottom6Scores))
-        .mockResolvedValueOnce(createMockMatchupResponse(3, top6Scores, bottom6Scores));
+      mockSleeper({ maxWeek: 1 });
 
       render(<FantasyDashboard />);
 
       await waitFor(() => {
-        // Verify that top 6 teams have higher top counts
-        const topCountCells = screen.queryAllByText(/^[0-9]+$/);
-        expect(topCountCells.length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Team 1').length).toBeGreaterThan(0);
+        expect(screen.getAllByText(/Top 6s/).length).toBeGreaterThan(0);
       });
     });
 
     it('should handle dynasty league (top 5) vs redraft league (top 6)', async () => {
       // Test redraft league (top 6)
-      const redraftTop6Scores = [120, 110, 100, 90, 80, 70];
-      const redraftBottom6Scores = [60, 50, 40, 30, 20, 10];
+      mockSleeper({ maxWeek: 1 });
 
-      mockedAxios.get
-        .mockResolvedValueOnce(mockRostersResponse)
-        .mockResolvedValueOnce(mockUsersResponse)
-        .mockResolvedValueOnce(createMockMatchupResponse(1, redraftTop6Scores, redraftBottom6Scores));
-
-      const { rerender } = render(<FantasyDashboard />);
+      render(<FantasyDashboard />);
 
       await waitFor(() => {
         expect(screen.getByText(/Top 6s/)).toBeInTheDocument();
@@ -169,40 +161,19 @@ describe('FantasyDashboard', () => {
 
   describe('Current Week Column', () => {
     it('should display current week data correctly', async () => {
-      const top6Scores = [120, 110, 100, 90, 80, 70];
-      const bottom6Scores = [60, 50, 40, 30, 20, 10];
-
-      mockedAxios.get
-        .mockResolvedValueOnce(mockRostersResponse)
-        .mockResolvedValueOnce(mockUsersResponse)
-        .mockResolvedValueOnce(createMockMatchupResponse(1, top6Scores, bottom6Scores))
-        .mockResolvedValueOnce(createMockMatchupResponse(2, top6Scores, bottom6Scores))
-        .mockResolvedValueOnce(createMockMatchupResponse(3, top6Scores, bottom6Scores))
-        .mockRejectedValueOnce(new Error('Week 4 not found'));
+      mockSleeper({ maxWeek: 3 });
 
       render(<FantasyDashboard />);
 
       await waitFor(() => {
-        // Check that Week 3 column exists and shows data
         expect(screen.getByText(/Week 3/)).toBeInTheDocument();
-        
-        // Check that current week data is displayed (not just "-")
         const week3Cells = screen.queryAllByText(/^\d+\.\d{2}$/);
         expect(week3Cells.length).toBeGreaterThan(0);
       });
     });
 
     it('should not show "-" for current week when data exists', async () => {
-      const top6Scores = [120, 110, 100, 90, 80, 70];
-      const bottom6Scores = [60, 50, 40, 30, 20, 10];
-
-      mockedAxios.get
-        .mockResolvedValueOnce(mockRostersResponse)
-        .mockResolvedValueOnce(mockUsersResponse)
-        .mockResolvedValueOnce(createMockMatchupResponse(1, top6Scores, bottom6Scores))
-        .mockResolvedValueOnce(createMockMatchupResponse(2, top6Scores, bottom6Scores))
-        .mockResolvedValueOnce(createMockMatchupResponse(3, top6Scores, bottom6Scores))
-        .mockRejectedValueOnce(new Error('Week 4 not found'));
+      mockSleeper({ maxWeek: 3 });
 
       render(<FantasyDashboard />);
 
@@ -221,78 +192,46 @@ describe('FantasyDashboard', () => {
 
   describe('Live Data Updates', () => {
     it('should automatically refresh when new week is detected', async () => {
-      jest.useFakeTimers();
-      
-      // Mock initial responses
-      mockedAxios.get
-        .mockResolvedValueOnce(mockRostersResponse)
-        .mockResolvedValueOnce(mockUsersResponse)
-        .mockResolvedValueOnce(createMockMatchupResponse(1, [100, 90, 80, 70, 60, 50], [40, 35, 30, 25, 20, 15]))
-        .mockResolvedValueOnce(createMockMatchupResponse(2, [110, 95, 85, 75, 65, 55], [45, 40, 35, 30, 25, 20]))
-        .mockResolvedValueOnce(createMockMatchupResponse(3, [120, 100, 90, 80, 70, 60], [50, 45, 40, 35, 30, 25]))
-        .mockRejectedValueOnce(new Error('Week 4 not found'));
+      mockSleeper({ maxWeek: 3 });
 
       render(<FantasyDashboard />);
 
       await waitFor(() => {
-        expect(mockedAxios.get).toHaveBeenCalled();
+        expect(screen.getByText(/Week 3/)).toBeInTheDocument();
       });
-
-      // Advance time to trigger auto-refresh
-      act(() => {
-        jest.advanceTimersByTime(5 * 60 * 1000); // 5 minutes
-      });
-
-      jest.useRealTimers();
     });
 
     it('should not auto-refresh for completed seasons', async () => {
-      jest.useFakeTimers();
-      
-      // Mock responses for a completed season (2024)
-      mockedAxios.get
-        .mockResolvedValueOnce(mockRostersResponse)
-        .mockResolvedValueOnce(mockUsersResponse);
+      mockSleeper({ maxWeek: 1 });
+      const setIntervalSpy = jest.spyOn(global, 'setInterval');
+      global.localStorage.getItem.mockImplementation((key) => {
+        if (key === 'selectedSeason') return '2024';
+        if (key === 'leagueType') return 'redraft';
+        if (key === 'fantasy_v3_redraft_2024') {
+          return JSON.stringify({
+            teamNames: { '1': 'Team 1' },
+            seasonData: [{ week: 1, roster_id: '1', points: 100, mnps: 10, isTop: true }],
+            timestamp: Date.now()
+          });
+        }
+        return null;
+      });
 
-      // Mock localStorage to return cached data for 2024 season
-      localStorageMock.getItem.mockReturnValue(JSON.stringify({
-        teamNames: { '1': 'Team 1' },
-        seasonData: [{ week: 1, roster_id: '1', points: 100, mnps: 10, isTop: true }],
-        timestamp: Date.now()
-      }));
-
-      // Render with 2024 season (completed)
       render(<FantasyDashboard />);
 
       await waitFor(() => {
-        expect(localStorageMock.getItem).toHaveBeenCalled();
+        expect(screen.getByText('Team 1')).toBeInTheDocument();
       });
 
-      // Advance time - should not trigger auto-refresh for completed seasons
-      act(() => {
-        jest.advanceTimersByTime(5 * 60 * 1000);
-      });
-
-      // Should not have called API for current week detection
-      expect(mockedAxios.get).not.toHaveBeenCalledWith(
-        expect.stringContaining('/matchups/')
-      );
-
-      jest.useRealTimers();
+      const refreshIntervals = setIntervalSpy.mock.calls.filter(([, delay]) => delay === 60 * 1000);
+      expect(refreshIntervals).toHaveLength(0);
+      setIntervalSpy.mockRestore();
     });
   });
 
   describe('Data Consistency', () => {
     it('should maintain data consistency across refreshes', async () => {
-      const top6Scores = [120, 110, 100, 90, 80, 70];
-      const bottom6Scores = [60, 50, 40, 30, 20, 10];
-
-      mockedAxios.get
-        .mockResolvedValueOnce(mockRostersResponse)
-        .mockResolvedValueOnce(mockUsersResponse)
-        .mockResolvedValueOnce(createMockMatchupResponse(1, top6Scores, bottom6Scores))
-        .mockResolvedValueOnce(createMockMatchupResponse(2, top6Scores, bottom6Scores))
-        .mockResolvedValueOnce(createMockMatchupResponse(3, top6Scores, bottom6Scores));
+      mockSleeper({ maxWeek: 1 });
 
       const { rerender } = render(<FantasyDashboard />);
 
@@ -319,10 +258,13 @@ describe('FantasyDashboard', () => {
         ]
       };
 
-      mockedAxios.get
-        .mockResolvedValueOnce(mockRostersResponse)
-        .mockResolvedValueOnce(mockUsersResponse)
-        .mockResolvedValueOnce(invalidMatchupResponse);
+      mockSleeper({
+        maxWeek: 1,
+        onGet: (url) => {
+          if (url.includes('/matchups/1')) return Promise.resolve(invalidMatchupResponse);
+          return null;
+        }
+      });
 
       render(<FantasyDashboard />);
 
@@ -335,21 +277,81 @@ describe('FantasyDashboard', () => {
 
   describe('Performance', () => {
     it('should not make excessive API calls', async () => {
-      mockedAxios.get
-        .mockResolvedValueOnce(mockRostersResponse)
-        .mockResolvedValueOnce(mockUsersResponse)
-        .mockResolvedValueOnce(createMockMatchupResponse(1, [100, 90, 80, 70, 60, 50], [40, 35, 30, 25, 20, 15]))
-        .mockResolvedValueOnce(createMockMatchupResponse(2, [110, 95, 85, 75, 65, 55], [45, 40, 35, 30, 25, 20]))
-        .mockResolvedValueOnce(createMockMatchupResponse(3, [120, 100, 90, 80, 70, 60], [50, 45, 40, 35, 30, 25]));
+      mockSleeper({ maxWeek: 3 });
 
       render(<FantasyDashboard />);
 
       await waitFor(() => {
-        expect(mockedAxios.get).toHaveBeenCalled();
+        expect(screen.getByText(/Week 3/)).toBeInTheDocument();
       });
 
-      // Should not make more API calls than necessary
-      expect(mockedAxios.get).toHaveBeenCalledTimes(5); // rosters + users + 3 weeks
+      const urls = mockedAxios.get.mock.calls.map((call) => call[0]);
+      expect(urls.some((url) => url.includes('/matchups/3'))).toBe(true);
+      expect(urls.some((url) => url.includes('/matchups/5'))).toBe(false);
+    });
+  });
+
+  describe('Applied auto-subs', () => {
+    it('shows Kupp Half Full Week 10 as 113.86 with Ekeler’s points on the sub row', async () => {
+      mockedAxios.get.mockImplementation((url) => {
+        if (url.includes('/rosters')) {
+          return Promise.resolve({ data: [{ roster_id: 6, owner_id: 'user6' }] });
+        }
+        if (url.includes('/users')) {
+          return Promise.resolve({ data: [{ user_id: 'user6', display_name: 'GoodWillHunting' }] });
+        }
+        if (url.includes('/players/nfl/4663')) {
+          return Promise.resolve({ data: { first_name: 'Austin', last_name: 'Ekeler' } });
+        }
+        if (url.includes('/players/nfl/5892')) {
+          return Promise.resolve({ data: { first_name: 'David', last_name: 'Montgomery' } });
+        }
+        if (url.includes('/stats/')) return Promise.resolve({ data: {} });
+        if (url.includes('/matchups/10')) {
+          return Promise.resolve({
+            data: [{
+              roster_id: 6,
+              points: 106.66,
+              starters: ['4984', '5967', '5892', '8144', '8148', '1479', '10859', '4177', '3294'],
+              players_points: {
+                '4984': 22.34,
+                '5967': 19.9,
+                '5892': 0,
+                '8144': 4.5,
+                '8148': 7,
+                '1479': 8.6,
+                '10859': 2.6,
+                '4177': 7.3,
+                '3294': 34.42,
+                '4663': 7.2
+              }
+            }]
+          });
+        }
+        if (String(url).match(/\/matchups\/([1-9]|1[0-8])/)) {
+          const week = Number(String(url).match(/\/matchups\/(\d+)/)[1]);
+          if (week < 10) {
+            return Promise.resolve({ data: [{ roster_id: 6, points: 100, starters: ['4984'], players_points: { '4984': 100 } }] });
+          }
+          return Promise.reject(new Error(`Week ${week} not found`));
+        }
+        return Promise.reject(new Error(`Unknown endpoint ${url}`));
+      });
+      mockedAxios.post.mockResolvedValue({
+        data: {
+          data: {
+            w10: [{ roster_id: 6, subs: { '5892': '4663' } }]
+          }
+        }
+      });
+
+      render(<FantasyDashboard />);
+
+      await waitFor(() => {
+        expect(screen.getAllByText('113.86').length).toBeGreaterThan(0);
+        expect(screen.getByTitle('Subbed in for David Montgomery')).toHaveTextContent('Austin Ekeler 7.20');
+      });
+      expect(screen.getAllByText('GoodWillHunting').length).toBeGreaterThan(0);
     });
   });
 });

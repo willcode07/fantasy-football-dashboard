@@ -12,14 +12,20 @@ jest.mock('axios', () => ({
   delete: jest.fn(() => Promise.resolve({ data: {} })),
 }));
 
-// Mock localStorage
+// jsdom's localStorage is not a Jest mock, and assigning global.localStorage
+// does not replace the window object the app reads.
 const localStorageMock = {
-  getItem: jest.fn(),
+  getItem: jest.fn(() => null),
   setItem: jest.fn(),
   removeItem: jest.fn(),
   clear: jest.fn(),
 };
-global.localStorage = localStorageMock;
+Object.defineProperty(window, 'localStorage', {
+  configurable: true,
+  writable: true,
+  value: localStorageMock,
+});
+global.localStorage = window.localStorage;
 
 // Mock console methods to reduce noise in tests
 global.console = {

@@ -204,6 +204,13 @@ td {
     margin-top: 4px;
 }
 
+.auto-sub {
+    font-size: 0.7rem;
+    color: #80cbc4;
+    margin-top: 2px;
+    line-height: 1.2;
+}
+
 .total-col {
     background-color: #333333; /* Darker total column */
     font-weight: 500;
